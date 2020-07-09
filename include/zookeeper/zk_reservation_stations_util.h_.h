@@ -245,7 +245,7 @@ static inline void ldr_poll_credits(struct ibv_cq* credit_recv_cq, struct ibv_wc
 
 // Form Broadcast work requests for the leader
 static inline void forge_commit_wrs(zk_com_mes_t *com_mes, quorum_info_t *q_info, uint16_t t_id,
-                                    uint16_t br_i, struct hrd_ctrl_blk *cb, struct ibv_sge *com_send_sgl,
+                                    uint16_t br_i, hrd_ctrl_blk_t *cb, struct ibv_sge *com_send_sgl,
                                     struct ibv_send_wr *send_wr,  uint64_t *commit_br_tx,
                                     uint16_t credits[][MACHINE_NUM])
 {
@@ -266,7 +266,7 @@ static inline void forge_commit_wrs(zk_com_mes_t *com_mes, quorum_info_t *q_info
 
 // Form the Broadcast work request for the prepare
 static inline void forge_prep_wr(uint16_t prep_i, p_writes_t *p_writes,
-                                 struct hrd_ctrl_blk *cb, struct ibv_sge *send_sgl,
+                                 hrd_ctrl_blk_t *cb, struct ibv_sge *send_sgl,
                                  struct ibv_send_wr *send_wr, uint64_t *prep_br_tx,
                                  uint16_t br_i, uint16_t credits[][MACHINE_NUM],
                                  uint8_t vc, uint16_t t_id) {
@@ -302,7 +302,7 @@ static inline void forge_prep_wr(uint16_t prep_i, p_writes_t *p_writes,
 
 // Form the Write work request for the write
 static inline void forge_w_wr(p_writes_t *p_writes,
-                              struct hrd_ctrl_blk *cb, struct ibv_sge *w_send_sgl,
+                              hrd_ctrl_blk_t *cb, struct ibv_sge *w_send_sgl,
                               struct ibv_send_wr *w_send_wr, uint64_t *w_tx,
                               uint16_t w_i, uint16_t credits,
                               uint16_t t_id)

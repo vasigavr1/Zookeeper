@@ -11,8 +11,7 @@
 
 
 
-#define DISABLE_GID_ORDERING 0
-#define DISABLE_UPDATING_KVS 0
+
 
 #define ENABLE_CACHE_STATS 0
 

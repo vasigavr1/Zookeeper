@@ -392,7 +392,7 @@ static inline void broadcast_commits(p_writes_t *p_writes, uint16_t credits[][MA
 
 // Leader Broadcasts its Prepares
 static inline void broadcast_prepares(p_writes_t *p_writes,
-																			uint16_t credits[][MACHINE_NUM], struct hrd_ctrl_blk *cb,
+																			uint16_t credits[][MACHINE_NUM], hrd_ctrl_blk_t *cb,
 																			struct ibv_sge *prep_send_sgl, struct ibv_send_wr *prep_send_wr,
 																			uint64_t *prep_br_tx, recv_info_t *ack_recv_info,
                                       struct fifo *remote_prep_buf, uint32_t *time_out_cnt,
@@ -501,7 +501,7 @@ static inline void flr_poll_for_prepares(volatile zk_prep_mes_ud_t *incoming_pre
 // Send a batched ack that denotes the first local write id and the number of subsequent lid that are being acked
 static inline void send_acks_to_ldr(p_writes_t *p_writes, struct ibv_send_wr *ack_send_wr,
 																		struct ibv_sge *ack_send_sgl, uint64_t *sent_ack_tx,
-																		struct hrd_ctrl_blk *cb, recv_info_t *prep_recv_info,
+																		hrd_ctrl_blk_t *cb, recv_info_t *prep_recv_info,
 																		uint8_t flr_id, zk_ack_mes_t *ack,
 																		struct pending_acks *p_acks, uint16_t t_id)
 {
@@ -540,7 +540,7 @@ static inline void send_acks_to_ldr(p_writes_t *p_writes, struct ibv_send_wr *ac
 
 
 //Send credits for the commits
-static inline void send_credits_for_commits(recv_info_t *com_recv_info, struct hrd_ctrl_blk *cb,
+static inline void send_credits_for_commits(recv_info_t *com_recv_info, hrd_ctrl_blk_t *cb,
                                             struct ibv_send_wr *credit_wr, uint64_t *credit_tx,
                                             uint16_t credit_num, uint16_t t_id)
 {
@@ -567,7 +567,7 @@ static inline void send_credits_for_commits(recv_info_t *com_recv_info, struct h
 
 // Send the local writes to the ldr
 static inline void send_writes_to_the_ldr(p_writes_t *p_writes,
-                                          uint16_t *credits, struct hrd_ctrl_blk *cb,
+                                          uint16_t *credits, hrd_ctrl_blk_t *cb,
                                           struct ibv_sge *w_send_sgl, struct ibv_send_wr *w_send_wr,
                                           uint64_t *w_tx, struct fifo *remote_w_buf,
                                           uint16_t t_id, uint32_t *outstanding_writes)
@@ -606,7 +606,7 @@ static inline void send_writes_to_the_ldr(p_writes_t *p_writes,
 static inline void poll_for_coms(zk_com_mes_ud_t *incoming_coms, uint32_t *pull_ptr,
                                  p_writes_t *p_writes, uint16_t *credits,
                                  struct ibv_cq * com_recv_cq, struct ibv_wc *com_recv_wc,
-                                 recv_info_t *com_recv_info, struct hrd_ctrl_blk *cb,
+                                 recv_info_t *com_recv_info, hrd_ctrl_blk_t *cb,
                                  struct ibv_send_wr *credit_wr, uint64_t *credit_tx,
                                  struct fifo *remote_w_buf,
                                  uint32_t *completed_but_not_polled_coms,

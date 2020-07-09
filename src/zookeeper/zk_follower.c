@@ -19,7 +19,7 @@ void *follower(void *arg)
 
   int *recv_q_depths, *send_q_depths;
   set_up_queue_depths_ldr_flr(&recv_q_depths, &send_q_depths, protocol);
-  struct hrd_ctrl_blk *cb = hrd_ctrl_blk_init(t_id,	/* local_hid */
+  hrd_ctrl_blk_t *cb = hrd_ctrl_blk_init(t_id,	/* local_hid */
                                               0, -1, /* port_index, numa_node_id */
                                               0, 0,	/* #conn qps, uc */
                                               NULL, 0, -1,	/* prealloc conn buf, buf size, key */
@@ -36,31 +36,32 @@ void *follower(void *arg)
   ------------------------------MULTICAST SET UP-------------------------------
   ---------------------------------------------------------------------------*/
 
-  struct mcast_info *mcast_data;
-  struct mcast_essentials *mcast = NULL;
-  // need to init mcast before sync, such that we can post recvs
+  mcast_cb_t *mcast_cb = NULL;
+  // need to init mcast_cb before sync, such that we can post recvs
   if (ENABLE_MULTICAST == 1) {
-      zk_init_multicast(&mcast_data, &mcast, t_id, cb, protocol);
-      assert(mcast != NULL);
+    mcast_cb = zk_init_multicast(t_id, cb, protocol);
+    assert(mcast_cb != NULL);
   }
 
-  struct ibv_cq *prep_recv_cq = ENABLE_MULTICAST == 1 ? mcast->recv_cq[PREP_MCAST_QP] : cb->dgram_recv_cq[PREP_ACK_QP_ID];
-  struct ibv_qp *prep_recv_qp = ENABLE_MULTICAST == 1 ? mcast->recv_qp[PREP_MCAST_QP] : cb->dgram_qp[PREP_ACK_QP_ID];
-  struct ibv_cq *com_recv_cq = ENABLE_MULTICAST == 1 ? mcast->recv_cq[COM_MCAST_QP] : cb->dgram_recv_cq[COMMIT_W_QP_ID];
-  struct ibv_qp *com_recv_qp = ENABLE_MULTICAST == 1 ? mcast->recv_qp[COM_MCAST_QP] : cb->dgram_qp[COMMIT_W_QP_ID];
-  uint32_t lkey = ENABLE_MULTICAST == 1 ?  mcast->recv_mr->lkey : cb->dgram_buf_mr->lkey;
+  struct ibv_cq *prep_recv_cq = ENABLE_MULTICAST ? mcast_cb->recv_cq[PREP_MCAST_QP] : cb->dgram_recv_cq[PREP_ACK_QP_ID];
+  struct ibv_qp *prep_recv_qp = ENABLE_MULTICAST ? mcast_cb->recv_qp[PREP_MCAST_QP] : cb->dgram_qp[PREP_ACK_QP_ID];
+  struct ibv_cq *com_recv_cq = ENABLE_MULTICAST ? mcast_cb->recv_cq[COM_MCAST_QP] : cb->dgram_recv_cq[COMMIT_W_QP_ID];
+  struct ibv_qp *com_recv_qp = ENABLE_MULTICAST ? mcast_cb->recv_qp[COM_MCAST_QP] : cb->dgram_qp[COMMIT_W_QP_ID];
+  uint32_t lkey = ENABLE_MULTICAST ?  mcast_cb->recv_mr->lkey : cb->dgram_buf_mr->lkey;
   /* Fill the RECV queues that receive the Commits and Prepares, (we need to do this early) */
   if (WRITE_RATIO > 0) {
     pre_post_recvs(&prep_push_ptr, prep_recv_qp, lkey, (void *) prep_buffer,
-                   FLR_PREP_BUF_SLOTS, FLR_MAX_RECV_PREP_WRS, PREP_ACK_QP_ID, (uint32_t)FLR_PREP_RECV_SIZE);
+                   FLR_PREP_BUF_SLOTS, FLR_MAX_RECV_PREP_WRS,
+                   PREP_ACK_QP_ID, (uint32_t) FLR_PREP_RECV_SIZE);
     pre_post_recvs(&com_push_ptr, com_recv_qp, lkey, (void *) com_buffer,
-                   FLR_COM_BUF_SLOTS, FLR_MAX_RECV_COM_WRS, COMMIT_W_QP_ID, (uint32_t)FLR_COM_RECV_SIZE);
+                   FLR_COM_BUF_SLOTS, FLR_MAX_RECV_COM_WRS,
+                   COMMIT_W_QP_ID, (uint32_t) FLR_COM_RECV_SIZE);
   }
   /* -----------------------------------------------------
   --------------CONNECT WITH LEADER-----------------------
   ---------------------------------------------------------*/
   setup_connections_and_spawn_stats_thread(g_id, cb, t_id);
-  if (MULTICAST_TESTING == 1) multicast_testing(mcast, t_id, cb, COMMIT_W_QP_ID);
+  if (MULTICAST_TESTING == 1) multicast_testing(mcast_cb, t_id, COM_MCAST_QP, cb, COMMIT_W_QP_ID);
 
   /* -----------------------------------------------------
   --------------DECLARATIONS------------------------------
@@ -95,12 +96,12 @@ void *follower(void *arg)
   struct ibv_mr *w_mr;
   zk_trace_op_t *ops = (zk_trace_op_t *) memalign(4096, ZK_TRACE_BATCH *  sizeof(zk_trace_op_t));
   recv_info_t *prep_recv_info, *com_recv_info;
-  prep_recv_info = init_recv_info(cb, prep_push_ptr, FLR_PREP_BUF_SLOTS,
+  prep_recv_info = init_recv_info(lkey, prep_push_ptr, FLR_PREP_BUF_SLOTS,
                                   (uint32_t) FLR_PREP_RECV_SIZE, FLR_MAX_RECV_PREP_WRS, prep_recv_qp,
                                   FLR_MAX_RECV_PREP_WRS,
                                   prep_recv_wr, prep_recv_sgl,
                                   (void*) prep_buffer);
-  com_recv_info = init_recv_info(cb, com_push_ptr, FLR_COM_BUF_SLOTS,
+  com_recv_info = init_recv_info(lkey, com_push_ptr, FLR_COM_BUF_SLOTS,
                                  (uint32_t) FLR_COM_RECV_SIZE, FLR_MAX_RECV_COM_WRS,
                                  com_recv_qp, FLR_MAX_RECV_COM_WRS,
                                  com_recv_wr, com_recv_sgl,
@@ -123,7 +124,7 @@ void *follower(void *arg)
     ---------------------------------------------------------------------------*/
   // SEND AND RECEIVE WRs
   set_up_follower_WRs(ack_send_wr, ack_send_sgl, prep_recv_wr, prep_recv_sgl, w_send_wr, w_send_sgl,
-                      com_recv_wr, com_recv_sgl, remote_ldr_thread, cb, w_mr, mcast);
+                      com_recv_wr, com_recv_sgl, remote_ldr_thread, cb, w_mr, mcast_cb);
   flr_set_up_credit_WRs(credit_send_wr, &credit_send_sgl, cb, flr_id, FLR_MAX_CREDIT_WRS, t_id);
   // TRACE
   trace_t *trace;

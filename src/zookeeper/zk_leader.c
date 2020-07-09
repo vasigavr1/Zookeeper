@@ -18,7 +18,7 @@ void *leader(void *arg)
 
 	int *recv_q_depths, *send_q_depths;
   set_up_queue_depths_ldr_flr(&recv_q_depths, &send_q_depths, protocol);
-	struct hrd_ctrl_blk *cb = hrd_ctrl_blk_init(t_id,	/* local_hid */
+	hrd_ctrl_blk_t *cb = hrd_ctrl_blk_init(t_id,	/* local_hid */
 												0, -1, /* port_index, numa_node_id */
 												0, 0,	/* #conn qps, uc */
 												NULL, 0, -1,	/* prealloc conn buf, buf size, key */
@@ -35,13 +35,15 @@ void *leader(void *arg)
 	------------------------------MULTICAST SET UP-------------------------------
 	---------------------------------------------------------------------------*/
 
-	struct mcast_info *mcast_data = NULL;
-	struct mcast_essentials *mcast = NULL;
-	// need to init mcast before sync, such that we can post recvs
+	mcast_cb_t *mcast_cb = NULL;
+	// need to init mcast_cb before sync, such that we can post recvs
 	if (ENABLE_MULTICAST) {
-		zk_init_multicast(&mcast_data, &mcast, t_id, cb, protocol);
-		assert(mcast != NULL);
+    mcast_cb = zk_init_multicast(t_id, cb, protocol);
+		assert(mcast_cb != NULL);
 	}
+  /* ---------------------------------------------------------------------------
+	------------------------------PREPOST RECVS-------------------------------
+	---------------------------------------------------------------------------*/
 	/* Fill the RECV queue that receives the Broadcasts, we need to do this early */
 	if (WRITE_RATIO > 0) {
     // Pre post receives only for writes
@@ -53,7 +55,7 @@ void *leader(void *arg)
 	--------------CONNECT WITH FOLLOWERS-----------------------
 	---------------------------------------------------------*/
   setup_connections_and_spawn_stats_thread(g_id, cb, t_id);
-	if (MULTICAST_TESTING == 1) multicast_testing(mcast, t_id, cb, COMMIT_W_QP_ID);
+	if (MULTICAST_TESTING == 1) multicast_testing(mcast_cb, t_id, COM_MCAST_QP, cb, COMMIT_W_QP_ID);
 
 	/* -----------------------------------------------------
 	--------------DECLARATIONS------------------------------
@@ -80,19 +82,20 @@ void *leader(void *arg)
   uint64_t prep_br_tx = 0, commit_br_tx = 0;
 
   recv_info_t *w_recv_info, *ack_recv_info, *cred_recv_info;
-  w_recv_info =  init_recv_info(cb, w_buf_push_ptr, LEADER_W_BUF_SLOTS,
+  uint32_t lkey = cb->dgram_buf_mr->lkey;
+  w_recv_info =  init_recv_info(lkey, w_buf_push_ptr, LEADER_W_BUF_SLOTS,
                                 (uint32_t) LDR_W_RECV_SIZE, LDR_MAX_RECV_W_WRS,
                                 cb->dgram_qp[COMMIT_W_QP_ID],
                                 LDR_MAX_RECV_W_WRS,
                                 w_recv_wr, w_recv_sgl,
                                 (void*) w_buffer);
 
-  ack_recv_info = init_recv_info(cb, ack_buf_push_ptr, LEADER_ACK_BUF_SLOTS,
+  ack_recv_info = init_recv_info(lkey, ack_buf_push_ptr, LEADER_ACK_BUF_SLOTS,
                                  (uint32_t) LDR_ACK_RECV_SIZE, 0, cb->dgram_qp[PREP_ACK_QP_ID],
                                  LDR_MAX_RECV_ACK_WRS, ack_recv_wr, ack_recv_sgl,
                                  (void*) ack_buffer);
 
-  cred_recv_info = init_recv_info(cb, 0, 0, 64, 0, cb->dgram_qp[FC_QP_ID],
+  cred_recv_info = init_recv_info(lkey, 0, 0, 64, 0, cb->dgram_qp[FC_QP_ID],
                                  LDR_MAX_CREDIT_RECV, credit_recv_wr, &credit_recv_sgl,
                                  (void*) cb->dgram_buf);
 
@@ -102,8 +105,8 @@ void *leader(void *arg)
 			.measured_sess_id = 0,
 	};
 
-	zk_trace_op_t *ops = (zk_trace_op_t *) calloc((size_t) MAX_OP_BATCH, sizeof(zk_trace_op_t));
-  zk_resp_t *resp = (zk_resp_t*) calloc((size_t) MAX_OP_BATCH, sizeof(zk_resp_t));
+	zk_trace_op_t *ops = (zk_trace_op_t *) calloc((size_t) ZK_TRACE_BATCH, sizeof(zk_trace_op_t));
+  zk_resp_t *resp = (zk_resp_t*) calloc((size_t) ZK_TRACE_BATCH, sizeof(zk_resp_t));
   zk_com_fifo_t *com_fifo = set_up_ldr_ops(resp, t_id);
 	struct ibv_mr *prep_mr, *com_mr;
 
@@ -112,7 +115,7 @@ void *leader(void *arg)
   p_writes_t *p_writes = set_up_pending_writes(LEADER_PENDING_WRITES, prep_send_wr,
                                                com_send_wr, credits, protocol);
   void *prep_buf = (void *) p_writes->prep_fifo->prep_message;
-  set_up_ldr_mrs(&prep_mr, prep_buf, &com_mr, (void *)com_fifo->commits, cb);
+  set_up_ldr_mrs(&prep_mr, prep_buf, &com_mr, (void *) com_fifo->commits, cb);
 
   // There are no explicit credits and therefore we need to represent the remote prepare buffer somehow,
   // such that we can interpret the incoming acks correctly
@@ -130,7 +133,7 @@ void *leader(void *arg)
   }
   set_up_ldr_WRs(prep_send_wr, prep_send_sgl,
                   com_send_wr, com_send_sgl,
-                  t_id, follower_id, prep_mr, com_mr, mcast);
+                  t_id, follower_id, prep_mr, com_mr, mcast_cb);
 
 	// TRACE
 	trace_t *trace = NULL;

@@ -16,6 +16,8 @@
 #define COMMIT_CREDITS 30
 #define FEED_FROM_TRACE 0
 
+#define DISABLE_GID_ORDERING 1
+#define DISABLE_UPDATING_KVS 0
 
 #define FOLLOWERS_PER_MACHINE (WORKERS_PER_MACHINE)
 #define LEADERS_PER_MACHINE (WORKERS_PER_MACHINE)
@@ -42,6 +44,13 @@ struct mica_op {
   uint32_t key_id; // strictly for debug
   uint8_t padding[MICA_OP_PADDING_SIZE];
 };
+
+// MULTICAST
+#define MCAST_QPS MACHINE_NUM
+#define MCAST_QP_NUM 2
+#define MCAST_GROUPS_NUM 2
+#define PREP_MCAST_QP 0
+#define COM_MCAST_QP 1 //
 
 
 

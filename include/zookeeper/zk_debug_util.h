@@ -322,7 +322,8 @@ zk_check_prepare_and_print(zk_prepare_t *prepare,
   if (ENABLE_ASSERTIONS) {
     assert(prepare->sess_id < SESSIONS_PER_THREAD);
     assert(prepare->flr_id <= MACHINE_NUM);
-    assert(prepare->g_id > committed_global_w_id);
+    if (!DISABLE_GID_ORDERING)
+      assert(prepare->g_id > committed_global_w_id);
     assert(prepare->val_len == VALUE_SIZE >> SHIFT_BITS);
     assert(p_writes->w_state[push_ptr] == INVALID);
   }

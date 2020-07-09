@@ -6,8 +6,11 @@ set(odyssey_VERSION_MAJOR 1)
 include_directories(odyssey-shared/include/libhrd kite/include/kite odyssey-shared/include/mica odyssey-shared/include/general_util include/zookeeper
         kite/include/kite_inline_util /usr/include/)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -std=gnu1x -Wno-address-of-packed-member \
--Wno-format-truncation -g  -march=native")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -std=gnu1x -march=native -Wno-address-of-packed-member \
+-Wno-format-truncation -g ")
+
+
+set(CMAKE_LINKER_FLAGS)
 
 
 set(COMMON_FILES

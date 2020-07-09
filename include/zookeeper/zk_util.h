@@ -65,19 +65,19 @@ void init_fifo(struct fifo **fifo, uint32_t max_size, uint32_t);
 void set_up_ldr_WRs(struct ibv_send_wr*, struct ibv_sge*,
                     struct ibv_send_wr*, struct ibv_sge*,
                     uint16_t, uint16_t, struct ibv_mr*,
-                    struct ibv_mr*, struct mcast_essentials*);
+                    struct ibv_mr*, mcast_cb_t*);
 // Set up all Follower WRs
 void set_up_follower_WRs(struct ibv_send_wr *ack_send_wr, struct ibv_sge *ack_send_sgl,
                          struct ibv_recv_wr *prep_recv_wr, struct ibv_sge *prep_recv_sgl,
                          struct ibv_send_wr *w_send_wr, struct ibv_sge *w_send_sgl,
                          struct ibv_recv_wr *com_recv_wr, struct ibv_sge *com_recv_sgl,
                          uint16_t remote_thread,
-                         struct hrd_ctrl_blk *cb, struct ibv_mr *w_mr,
-                         struct mcast_essentials *mcast);
+                         hrd_ctrl_blk_t *cb, struct ibv_mr *w_mr,
+                         mcast_cb_t *mcast);
 
 // Follower sends credits for commits
 void flr_set_up_credit_WRs(struct ibv_send_wr* credit_send_wr, struct ibv_sge* credit_send_sgl,
-                           struct hrd_ctrl_blk *cb, uint8_t flr_id, uint32_t max_credt_wrs, uint16_t);
+                           hrd_ctrl_blk_t *cb, uint8_t flr_id, uint32_t max_credt_wrs, uint16_t);
 
 // Post receives for the coherence traffic in the init phase
 void pre_post_recvs(uint32_t*, struct ibv_qp *, uint32_t lkey, void*,
@@ -86,10 +86,10 @@ void pre_post_recvs(uint32_t*, struct ibv_qp *, uint32_t lkey, void*,
 zk_com_fifo_t* set_up_ldr_ops(zk_resp_t*, uint16_t);
 // Set up the memory registrations required in the leader if there is no Inlining
 void set_up_ldr_mrs(struct ibv_mr**, void*, struct ibv_mr**, void*,
-                    struct hrd_ctrl_blk*);
+                    hrd_ctrl_blk_t*);
 // Set up the credits for leader
 void ldr_set_up_credits_and_WRs(uint16_t credits[][MACHINE_NUM], struct ibv_recv_wr *credit_recv_wr,
-                                struct ibv_sge *credit_recv_sgl, struct hrd_ctrl_blk *cb,
+                                struct ibv_sge *credit_recv_sgl, hrd_ctrl_blk_t *cb,
                                 uint32_t max_credit_recvs);
 
 //Set up the depths of all QPs
@@ -105,8 +105,16 @@ void check_protocol(int);
 void print_latency_stats(void);
 
 
-void zk_init_multicast(struct mcast_info **mcast_data, struct mcast_essentials **mcast,
-											 int t_id, struct hrd_ctrl_blk *cb, int protocol);
+static mcast_cb_t* zk_init_multicast(uint16_t t_id, hrd_ctrl_blk_t *cb, int protocol)
+{
+	check_protocol(protocol);
+	uint32_t *recv_q_depth = (uint32_t *) malloc(MCAST_QP_NUM * sizeof(int));
+	recv_q_depth[0] = protocol == FOLLOWER ? FLR_RECV_PREP_Q_DEPTH : 1;
+	recv_q_depth[1] = protocol == FOLLOWER ? FLR_RECV_COM_Q_DEPTH : 1;
+	return create_mcast_cb(MCAST_GROUPS_NUM, MCAST_QP_NUM,
+												 MACHINE_NUM, recv_q_depth, (void *) cb->dgram_buf,
+												 (size_t) FLR_BUF_SIZE, t_id);
+}
 
 
 #endif /* ZK_UTILS_H */
