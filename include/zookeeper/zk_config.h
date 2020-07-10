@@ -47,8 +47,14 @@ struct mica_op {
 
 // MULTICAST
 #define MCAST_QPS MACHINE_NUM
-#define MCAST_QP_NUM 2
-#define MCAST_GROUPS_NUM 2
+#define MCAST_FLOW_NUM 2 // prepares and commits
+#define PREPARE_FLOW 0
+#define COMMIT_FLOW 1
+#define MCAST_LDR_RECV_QP_NUM 0 // leader does not receive
+#define MCAST_FLR_RECV_QP_NUM 2 // follower receives in both flows
+#define MCAST_LDR_SEND_QP_NUM 2 // leader sends in both flows
+#define MCAST_FLR_SEND_QP_NUM 0 // follower does not send
+#define MCAST_GROUPS_PER_FLOW 2
 #define PREP_MCAST_QP 0
 #define COM_MCAST_QP 1 //
 

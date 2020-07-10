@@ -33,7 +33,7 @@ void zk_static_assert_compile_parameters()
 {
   //static_assert(!ENABLE_CLIENTS, " ");
 
-  if (ENABLE_MULTICAST) assert(MCAST_QP_NUM == MCAST_GROUPS_NUM);
+  //if (ENABLE_MULTICAST) assert(MCAST_FLR_RECV_QP_NUM == MCAST_GROUPS_PER_FLOW);
   assert(LEADER_MACHINE < MACHINE_NUM);
   assert(LEADER_PENDING_WRITES >= SESSIONS_PER_THREAD);
   assert(sizeof(struct key) == KEY_SIZE);
