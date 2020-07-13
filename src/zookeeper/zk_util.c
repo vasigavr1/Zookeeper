@@ -210,11 +210,13 @@ void set_up_queue_depths_ldr_flr(int** recv_q_depths, int** send_q_depths, int p
   * 1st Dgram send Prepares -- receive ACKs
   * 2nd Dgram send Commits  -- receive Writes
   * 3rd Dgram  receive Credits
+  * 4th Dgram send R_reps receive Reads
   *
     * ------FOLLOWER-----------
   * 1st Dgram receive prepares -- send Acks
   * 2nd Dgram receive Commits  -- send Writes
   * 3rd Dgram  send Credits
+  * 4th Dgram send Reads receive R_Reps
   * */
   if (protocol == FOLLOWER) {
     *send_q_depths = malloc(FOLLOWER_QP_NUM * sizeof(int));
@@ -222,9 +224,12 @@ void set_up_queue_depths_ldr_flr(int** recv_q_depths, int** send_q_depths, int p
     (*recv_q_depths)[PREP_ACK_QP_ID] = ENABLE_MULTICAST == 1? 1 : FLR_RECV_PREP_Q_DEPTH;
     (*recv_q_depths)[COMMIT_W_QP_ID] = ENABLE_MULTICAST == 1? 1 : FLR_RECV_COM_Q_DEPTH;
     (*recv_q_depths)[FC_QP_ID] = FLR_RECV_CR_Q_DEPTH;
+    (*recv_q_depths)[R_QP_ID] = FLR_RECV_R_REP_Q_DEPTH;
+
     (*send_q_depths)[PREP_ACK_QP_ID] = FLR_SEND_ACK_Q_DEPTH;
     (*send_q_depths)[COMMIT_W_QP_ID] = FLR_SEND_W_Q_DEPTH;
     (*send_q_depths)[FC_QP_ID] = FLR_SEND_CR_Q_DEPTH;
+    (*send_q_depths)[R_QP_ID] = FLR_SEND_R_Q_DEPTH;
   }
   else if (protocol == LEADER) {
     *send_q_depths = malloc(LEADER_QP_NUM * sizeof(int));
@@ -232,9 +237,12 @@ void set_up_queue_depths_ldr_flr(int** recv_q_depths, int** send_q_depths, int p
     (*recv_q_depths)[PREP_ACK_QP_ID] = LDR_RECV_ACK_Q_DEPTH;
     (*recv_q_depths)[COMMIT_W_QP_ID] = LDR_RECV_W_Q_DEPTH;
     (*recv_q_depths)[FC_QP_ID] = LDR_RECV_CR_Q_DEPTH;
+    (*recv_q_depths)[R_QP_ID] = LDR_RECV_R_Q_DEPTH;
+
     (*send_q_depths)[PREP_ACK_QP_ID] = LDR_SEND_PREP_Q_DEPTH;
     (*send_q_depths)[COMMIT_W_QP_ID] = LDR_SEND_COM_Q_DEPTH;
     (*send_q_depths)[FC_QP_ID] = LDR_SEND_CR_Q_DEPTH;
+    (*send_q_depths)[R_QP_ID] = LDR_SEND_R_REP_Q_DEPTH;
   }
   else check_protocol(protocol);
 }
@@ -327,30 +335,20 @@ void set_up_follower_WRs(struct ibv_send_wr *ack_send_wr, struct ibv_sge *ack_se
                          mcast_cb_t *mcast)
 {
   uint16_t i;
-    // ACKS
-    ack_send_wr->wr.ud.ah = rem_qp[LEADER_MACHINE][remote_thread][PREP_ACK_QP_ID].ah;
-    ack_send_wr->wr.ud.remote_qpn = (uint32) rem_qp[LEADER_MACHINE][remote_thread][PREP_ACK_QP_ID].qpn;
-    ack_send_wr->wr.ud.remote_qkey = HRD_DEFAULT_QKEY;
-    ack_send_wr->opcode = IBV_WR_SEND;
-    ack_send_wr->send_flags = IBV_SEND_INLINE;
-    ack_send_sgl->length = FLR_ACK_SEND_SIZE;
-    ack_send_wr->num_sge = 1;
-    ack_send_wr->sg_list = ack_send_sgl;
-    ack_send_wr->next = NULL;
-    // WRITES
-    for (i = 0; i < FLR_MAX_W_WRS; ++i) {
-        w_send_wr[i].wr.ud.ah = rem_qp[LEADER_MACHINE][remote_thread][COMMIT_W_QP_ID].ah;
-        w_send_wr[i].wr.ud.remote_qpn = (uint32) rem_qp[LEADER_MACHINE][remote_thread][COMMIT_W_QP_ID].qpn;
-        if (FLR_W_ENABLE_INLINING) w_send_wr[i].send_flags = IBV_SEND_INLINE;
-        else {
-            w_send_sgl[i].lkey = w_mr->lkey;
-            w_send_wr[i].send_flags = 0;
-        }
-        w_send_wr[i].wr.ud.remote_qkey = HRD_DEFAULT_QKEY;
-        w_send_wr[i].opcode = IBV_WR_SEND;
-        w_send_wr[i].num_sge = 1;
-        w_send_wr[i].sg_list = &w_send_sgl[i];
-    }
+  // ACKS
+  set_up_wr(ack_send_wr, ack_send_sgl, true,
+            true, LEADER_MACHINE, remote_thread, PREP_ACK_QP_ID,
+            false, NULL, 0);
+  ack_send_sgl->length = FLR_ACK_SEND_SIZE;
+
+  // WRITES
+  for (i = 0; i < FLR_MAX_W_WRS; ++i) {
+    set_up_wr(&w_send_wr[i], &w_send_sgl[i], FLR_W_ENABLE_INLINING,
+              true, LEADER_MACHINE, remote_thread, COMMIT_W_QP_ID,
+              false, NULL, 0);
+    if (!FLR_W_ENABLE_INLINING)
+      w_send_sgl[i].lkey = w_mr->lkey;
+  }
 }
 
 

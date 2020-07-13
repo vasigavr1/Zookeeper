@@ -26,11 +26,14 @@ void *leader(void *arg)
 												MASTER_SHM_KEY + t_id, /* key */
 												recv_q_depths, send_q_depths); /* Depth of the dgram RECV Q*/
 
-  uint32_t ack_buf_push_ptr = 0, ack_buf_pull_ptr = 0;
-  uint32_t w_buf_push_ptr = 0, w_buf_pull_ptr = 0;
+  uint32_t ack_buf_push_ptr = 0, ack_buf_pull_ptr = 0,
+    w_buf_push_ptr = 0, w_buf_pull_ptr = 0,
+    r_buf_push_ptr = 0, r_buf_pull_ptr = 0;
   zk_ack_mes_ud_t *ack_buffer = (zk_ack_mes_ud_t *)(cb->dgram_buf);
   volatile zk_w_mes_ud_t *w_buffer =
     (volatile zk_w_mes_ud_t *)(cb->dgram_buf + LEADER_ACK_BUF_SIZE);
+  volatile struct  r_message_ud_req *r_buffer =
+    (volatile r_mes_ud_t *)(cb->dgram_buf + LEADER_ACK_BUF_SIZE + LEADER_W_BUF_SIZE);
 	/* ---------------------------------------------------------------------------
 	------------------------------MULTICAST SET UP-------------------------------
 	---------------------------------------------------------------------------*/
@@ -48,7 +51,10 @@ void *leader(void *arg)
 	if (WRITE_RATIO > 0) {
     // Pre post receives only for writes
     pre_post_recvs(&w_buf_push_ptr, cb->dgram_qp[COMMIT_W_QP_ID], cb->dgram_buf_mr->lkey, (void *)w_buffer,
-                   LEADER_W_BUF_SLOTS, LDR_MAX_RECV_W_WRS, COMMIT_W_QP_ID, LDR_W_RECV_SIZE);
+                   LEADER_W_BUF_SLOTS, LDR_MAX_RECV_W_WRS, COMMIT_W_QP_ID, (uint32_t) LDR_W_RECV_SIZE);
+
+    pre_post_recvs(&r_buf_push_ptr, cb->dgram_qp[R_QP_ID], cb->dgram_buf_mr->lkey, (void *)r_buffer,
+                   LEADER_R_BUF_SLOTS, MAX_RECV_R_WRS, R_QP_ID, (uint32_t) LDR_R_RECV_SIZE);
   }
 
 	/* -----------------------------------------------------
@@ -77,11 +83,17 @@ void *leader(void *arg)
   struct ibv_wc credit_wc[LDR_MAX_CREDIT_RECV];
   struct ibv_recv_wr credit_recv_wr[LDR_MAX_CREDIT_RECV];
 
+  // R_QP_ID 3: send R_Reps  -- receive Reads
+  struct ibv_send_wr r_rep_send_wr[MAX_R_REP_WRS];
+  struct ibv_sge r_rep_send_sgl[MAX_R_REP_WRS], r_recv_sgl[MAX_RECV_R_WRS];
+  struct ibv_wc r_recv_wc[MAX_RECV_R_WRS];
+  struct ibv_recv_wr r_recv_wr[MAX_RECV_R_WRS];
+
  	uint16_t credits[LDR_VC_NUM][MACHINE_NUM];
 	uint32_t trace_iter = 0;
   uint64_t prep_br_tx = 0, commit_br_tx = 0;
 
-  recv_info_t *w_recv_info, *ack_recv_info, *cred_recv_info;
+  recv_info_t *w_recv_info, *ack_recv_info, *cred_recv_info, *r_recv_info;
   uint32_t lkey = cb->dgram_buf_mr->lkey;
   w_recv_info =  init_recv_info(lkey, w_buf_push_ptr, LEADER_W_BUF_SLOTS,
                                 (uint32_t) LDR_W_RECV_SIZE, LDR_MAX_RECV_W_WRS,
@@ -98,6 +110,11 @@ void *leader(void *arg)
   cred_recv_info = init_recv_info(lkey, 0, 0, 64, 0, cb->dgram_qp[FC_QP_ID],
                                  LDR_MAX_CREDIT_RECV, credit_recv_wr, &credit_recv_sgl,
                                  (void*) cb->dgram_buf);
+
+  r_recv_info = init_recv_info(lkey, r_buf_push_ptr, LEADER_R_BUF_SLOTS,
+                               (uint32_t) R_RECV_SIZE, 0, cb->dgram_qp[R_QP_ID],
+                               MAX_RECV_R_WRS, r_recv_wr, r_recv_sgl,
+                               (void*) r_buffer);
 
 
 	latency_info_t latency_info = {

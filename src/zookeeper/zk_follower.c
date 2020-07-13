@@ -23,14 +23,17 @@ void *follower(void *arg)
                                               0, -1, /* port_index, numa_node_id */
                                               0, 0,	/* #conn qps, uc */
                                               NULL, 0, -1,	/* prealloc conn buf, buf size, key */
-                                              LEADER_QP_NUM, FLR_BUF_SIZE,	/* num_dgram_qps, dgram_buf_size */
+                                              FOLLOWER_QP_NUM, FLR_BUF_SIZE,	/* num_dgram_qps, dgram_buf_size */
                                               MASTER_SHM_KEY + t_id, /* key */
                                               recv_q_depths, send_q_depths); /* Depth of the dgram RECV Q*/
 
-  uint32_t prep_push_ptr = 0, prep_pull_ptr = 0;
-  uint32_t com_push_ptr = 0, com_pull_ptr = 0;
+  uint32_t prep_push_ptr = 0, prep_pull_ptr = 0,
+    com_push_ptr = 0, com_pull_ptr = 0,
+    r_rep_push_ptr = 0, r_rep_pull_ptr = 0;
   volatile zk_prep_mes_ud_t *prep_buffer = (volatile zk_prep_mes_ud_t *)(cb->dgram_buf);
   zk_com_mes_ud_t *com_buffer = (zk_com_mes_ud_t *)(cb->dgram_buf + FLR_PREP_BUF_SIZE);
+  volatile struct  r_rep_message_ud_req *r_rep_buffer =
+    (volatile r_rep_mes_ud_t *)(cb->dgram_buf + FLR_PREP_BUF_SIZE + FLR_COM_BUF_SIZE);
 
   /* ---------------------------------------------------------------------------
   ------------------------------MULTICAST SET UP-------------------------------
@@ -82,6 +85,12 @@ void *follower(void *arg)
   struct ibv_sge credit_send_sgl;
   uint16_t credits = W_CREDITS;
 
+  // R_QP_ID 3: send Reads  -- receive R_reps
+  struct ibv_send_wr r_send_wr[MAX_R_WRS];
+  struct ibv_sge r_send_sgl[MAX_R_WRS], r_rep_recv_sgl[MAX_RECV_R_REP_WRS];
+  struct ibv_wc r_rep_recv_wc[MAX_RECV_R_REP_WRS];
+  struct ibv_recv_wr r_rep_recv_wr[MAX_RECV_R_REP_WRS];
+
   uint32_t credit_debug_cnt = 0, outstanding_writes = 0, trace_iter = 0;
   uint64_t sent_ack_tx = 0, credit_tx = 0, w_tx = 0;
 
@@ -94,7 +103,7 @@ void *follower(void *arg)
   zk_resp_t *resp = (zk_resp_t *) calloc(ZK_TRACE_BATCH, sizeof(zk_resp_t));
   struct ibv_mr *w_mr;
   zk_trace_op_t *ops = (zk_trace_op_t *) calloc(ZK_TRACE_BATCH, sizeof(zk_trace_op_t));
-  recv_info_t *prep_recv_info, *com_recv_info;
+  recv_info_t *prep_recv_info, *com_recv_info, *r_rep_recv_info;
   prep_recv_info = init_recv_info(lkey, prep_push_ptr, FLR_PREP_BUF_SLOTS,
                                   (uint32_t) FLR_PREP_RECV_SIZE, FLR_MAX_RECV_PREP_WRS, prep_recv_qp,
                                   FLR_MAX_RECV_PREP_WRS,
@@ -105,6 +114,13 @@ void *follower(void *arg)
                                  com_recv_qp, FLR_MAX_RECV_COM_WRS,
                                  com_recv_wr, com_recv_sgl,
                                  (void*) com_buffer);
+
+
+
+  r_rep_recv_info = init_recv_info(lkey, r_rep_push_ptr, FLR_R_REP_BUF_SLOTS,
+                                   (uint32_t) R_REP_RECV_SIZE, 0, cb->dgram_qp[R_QP_ID],
+                                   MAX_RECV_R_REP_WRS, r_rep_recv_wr, r_rep_recv_sgl,
+                                   (void*) r_rep_buffer);
 
   p_writes_t *p_writes = set_up_pending_writes(FLR_PENDING_WRITES, NULL, NULL, NULL, protocol);
   p_acks_t *p_acks = (p_acks_t *) calloc(1, sizeof(p_acks_t));

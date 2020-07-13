@@ -9,6 +9,8 @@
 #include "zk_opcodes.h"
 
 // CORE CONFIGURATION
+#define R_CREDITS 5
+#define MAX_READ_SIZE 300 //300 in terms of bytes for Reads
 #define W_CREDITS 6
 #define MAX_W_COALESCE 6
 #define PREPARE_CREDITS 6

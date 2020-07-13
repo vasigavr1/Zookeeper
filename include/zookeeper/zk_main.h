@@ -75,6 +75,8 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 #define PREP_BCAST_SS_BATCH MAX((MIN_SS_BATCH / (FOLLOWER_MACHINE_NUM)), (MAX_BCAST_BATCH + 2))
 
 
+// post some extra receives to avoid spurious out_of_buffer errors
+#define RECV_WR_SAFETY_MARGIN 2
 
 // -------ACKS-------------
 #define USE_QUORUM 1
@@ -107,6 +109,49 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 #define FLR_W_ENABLE_INLINING ((FLR_W_SEND_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
 
 
+//---READS---
+#define R_MES_HEADER (10) // local id + coalesce num + m_id
+#define EFFECTIVE_MAX_R_SIZE (MAX_READ_SIZE - R_MES_HEADER)
+#define R_SIZE (VALUE_SIZE + R_MES_HEADER) // TODO
+#define R_COALESCE (EFFECTIVE_MAX_R_SIZE / R_SIZE)
+#define R_MES_SIZE (R_MES_HEADER + (R_SIZE * R_COALESCE))
+#define R_SEND_SIZE R_MES_SIZE
+#define MAX_READ_COALESCE R_COALESCE
+#define LDR_R_RECV_SIZE (GRH_SIZE + R_MES_SIZE)
+#define FLR_R_ENABLE_INLINING ((R_SEND_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
+
+#define R_SEND_SIDE_PADDING FIND_PADDING(R_SEND_SIZE)
+#define ALIGNED_R_SEND_SIDE (R_SEND_SIZE + R_SEND_SIDE_PADDING)
+
+#define MAX_RECV_R_WRS ((R_CREDITS * FOLLOWER_MACHINE_NUM) + RECV_WR_SAFETY_MARGIN)
+#define MAX_INCOMING_R (MAX_RECV_R_WRS * MAX_READ_COALESCE)
+#define MAX_R_WRS (MESSAGES_IN_BCAST_BATCH)
+#define R_ENABLE_INLINING ((R_SEND_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
+#define R_RECV_SIZE (GRH_SIZE + ALIGNED_R_SEND_SIDE)
+
+
+
+// READ REPLIES -- Replies to reads/acquires/proposes accepts
+#define R_REP_MES_HEADER (11) //l_id 8 , coalesce_num 1, m_id 1, opcode 1
+#define R_REP_SIZE (VALUE_SIZE + 8 + 1)
+#define R_REP_MES_SIZE (R_REP_MES_HEADER + (R_COALESCE * R_REP_SIZE))
+#define MAX_R_REP_MES_SIZE R_REP_MES_SIZE
+#define R_REP_SEND_SIZE MIN(MAX_R_REP_MES_SIZE, MTU)
+
+#define MAX_R_REP_COALESCE R_COALESCE
+#define MAX_REPS_IN_REP MAX_R_REP_COALESCE
+
+#define R_REP_SEND_SIDE_PADDING FIND_PADDING(R_REP_SEND_SIZE)
+#define ALIGNED_R_REP_SEND_SIDE (R_REP_SEND_SIZE + R_REP_SEND_SIDE_PADDING)
+#define R_REP_RECV_SIZE (GRH_SIZE + ALIGNED_R_REP_SEND_SIDE)
+
+#define MAX_RECV_R_REP_WRS (R_CREDITS) // a follower recvs r_Reps only from on machine (the leader)
+#define MAX_R_REP_WRS (R_CREDITS * FOLLOWER_MACHINE_NUM) // leader sends r_reps_to all
+
+#define R_REP_ENABLE_INLINING ((R_REP_SEND_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
+#define R_REP_FIFO_SIZE (MAX_RECV_R_WRS * MAX_READ_COALESCE)
+
+
 #define PREP_MES_HEADER 10 // opcode(1), coalesce_num(1) l_id (8)
 #define PREP_SIZE (KEY_SIZE + VALUE_SIZE + 13) // Size of a write
 #define LDR_PREP_SEND_SIZE (PREP_MES_HEADER + (MAX_PREP_COALESCE * PREP_SIZE))
@@ -122,9 +167,12 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 #define LEADER_ACK_BUF_SIZE (LDR_ACK_RECV_SIZE * LEADER_ACK_BUF_SLOTS)
 #define LEADER_W_BUF_SLOTS (2 * FOLLOWER_MACHINE_NUM * W_CREDITS)
 #define LEADER_W_BUF_SIZE (LDR_W_RECV_SIZE * LEADER_W_BUF_SLOTS)
+#define LEADER_R_BUF_SLOTS (2 * FOLLOWER_MACHINE_NUM * R_CREDITS)
+#define LEADER_R_BUF_SIZE (LDR_R_RECV_SIZE * LEADER_R_BUF_SLOTS)
 
-#define LEADER_BUF_SIZE (LEADER_W_BUF_SIZE + LEADER_ACK_BUF_SIZE)
-#define LEADER_BUF_SLOTS (LEADER_W_BUF_SLOTS + LEADER_ACK_BUF_SLOTS)
+
+#define LEADER_BUF_SIZE (LEADER_W_BUF_SIZE + LEADER_ACK_BUF_SIZE + LEADER_R_BUF_SIZE)
+#define LEADER_BUF_SLOTS (LEADER_W_BUF_SLOTS + LEADER_ACK_BUF_SLOTS + LEADER_R_BUF_SLOTS)
 
 #define LEADER_REMOTE_W_SLOTS (FOLLOWER_MACHINE_NUM * W_CREDITS * MAX_W_COALESCE)
 #define LEADER_PENDING_WRITES (SESSIONS_PER_THREAD + LEADER_REMOTE_W_SLOTS + 1)
@@ -148,8 +196,11 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 #define FLR_PREP_BUF_SIZE (FLR_PREP_RECV_SIZE * FLR_PREP_BUF_SLOTS)
 #define FLR_COM_BUF_SLOTS (COMMIT_CREDITS)
 #define FLR_COM_BUF_SIZE (FLR_COM_RECV_SIZE * FLR_COM_BUF_SLOTS)
-#define FLR_BUF_SIZE (FLR_PREP_BUF_SIZE + FLR_COM_BUF_SIZE)
-#define FLR_BUF_SLOTS (FLR_PREP_BUF_SLOTS + FLR_COM_BUF_SLOTS)
+#define FLR_R_REP_BUF_SLOTS (R_CREDITS)
+#define FLR_R_REP_BUF_SIZE (R_REP_RECV_SIZE * FLR_R_REP_BUF_SLOTS)
+
+#define FLR_BUF_SIZE (FLR_PREP_BUF_SIZE + FLR_COM_BUF_SIZE + FLR_R_REP_BUF_SIZE)
+#define FLR_BUF_SLOTS (FLR_PREP_BUF_SLOTS + FLR_COM_BUF_SLOTS + FLR_R_REP_BUF_SLOTS)
 #define W_FIFO_SIZE (SESSIONS_PER_THREAD + 1)
 #define MAX_PREP_BUF_SLOTS_TO_BE_POLLED (2 * PREPARE_CREDITS)
 #define FLR_PENDING_WRITES (2 * PREPARE_CREDITS * MAX_PREP_COALESCE) // 2/3 of the buffer
@@ -167,6 +218,7 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 #define FLR_MAX_CREDIT_WRS 1 //(COMMIT_CREDITS / FLR_CREDITS_IN_MESSAGE )
 #define FLR_MAX_CREDIT_RECV (W_CREDITS / LDR_CREDITS_IN_MESSAGE)
 #define ACK_SEND_SS_BATCH MAX(MIN_SS_BATCH, (FLR_MAX_ACK_WRS + 2))
+#define R_SS_BATCH MAX(MIN_SS_BATCH, (MAX_R_WRS + 2))
 
 
 #define MAX_LIDS_IN_A_COMMIT MIN(FLR_PENDING_WRITES, LEADER_PENDING_WRITES)
@@ -181,14 +233,16 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 
 #define COM_CREDIT_SS_BATCH MAX(MIN_SS_BATCH, (FLR_MAX_CREDIT_WRS + 1))
 #define WRITE_SS_BATCH MAX(MIN_SS_BATCH, (FLR_MAX_W_WRS + 1))
+#define R_REP_SS_BATCH MAX(MIN_SS_BATCH, (MAX_R_REP_WRS + 1))
 
 
-#define FOLLOWER_QP_NUM 3 /* The number of QPs for the follower */
-#define LEADER_QP_NUM 3 /* The number of QPs for the leader */
-#define QP_NUM 3
+#define FOLLOWER_QP_NUM 4 /* The number of QPs for the follower */
+#define LEADER_QP_NUM 4 /* The number of QPs for the leader */
+#define QP_NUM 4
 #define PREP_ACK_QP_ID 0
 #define COMMIT_W_QP_ID 1
 #define FC_QP_ID 2
+#define R_QP_ID 3
 
 /*
  * -------LEADER-------------
@@ -206,19 +260,23 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 #define LDR_RECV_ACK_Q_DEPTH (LDR_MAX_RECV_ACK_WRS + 3)
 #define LDR_RECV_W_Q_DEPTH  (LDR_MAX_RECV_W_WRS + 3) //
 #define LDR_RECV_CR_Q_DEPTH (LDR_MAX_CREDIT_RECV + 3) //()
+#define LDR_RECV_R_Q_DEPTH (MAX_RECV_R_WRS + 3)
 // LDR - Send
 #define LDR_SEND_PREP_Q_DEPTH ((PREP_BCAST_SS_BATCH * FOLLOWER_MACHINE_NUM) + 10 ) //
 #define LDR_SEND_COM_Q_DEPTH ((COM_BCAST_SS_BATCH * FOLLOWER_MACHINE_NUM) + 10 ) //
 #define LDR_SEND_CR_Q_DEPTH 1 //()
+#define LDR_SEND_R_REP_Q_DEPTH (R_REP_SS_BATCH + 3)
 
 // FLR - Receive
 #define FLR_RECV_PREP_Q_DEPTH (FLR_MAX_RECV_PREP_WRS + 3) //
 #define FLR_RECV_COM_Q_DEPTH (FLR_MAX_RECV_COM_WRS + 3) //
 #define FLR_RECV_CR_Q_DEPTH 1 //()
+#define FLR_RECV_R_REP_Q_DEPTH (MAX_RECV_R_REP_WRS + 3)
 // FLR - Send
 #define FLR_SEND_ACK_Q_DEPTH (ACK_SEND_SS_BATCH + 3) //
 #define FLR_SEND_W_Q_DEPTH (WRITE_SS_BATCH + 3) //
 #define FLR_SEND_CR_Q_DEPTH (COM_CREDIT_SS_BATCH + 3) //
+#define FLR_SEND_R_Q_DEPTH (R_SS_BATCH + 3) //
 
 
 // DEBUG
@@ -320,6 +378,60 @@ typedef struct zk_w_message_ud_req {
   uint8_t unused[GRH_SIZE];
   zk_w_mes_t w_mes;
 } zk_w_mes_ud_t;
+
+//-------------------------
+// Reads and Read Replies
+//-------------------------
+
+//
+struct read {
+  struct key key;
+  uint8_t opcode;
+  uint32_t log_no;
+} __attribute__((__packed__));
+
+struct r_message {
+  uint8_t coalesce_num;
+  uint8_t m_id;
+  uint64_t l_id ;
+  struct read read[R_COALESCE];
+} __attribute__((__packed__));
+
+
+typedef struct r_message_ud_req {
+  uint8_t unused[GRH_SIZE];
+  uint8_t r_mes[ALIGNED_R_SEND_SIDE];
+} r_mes_ud_t;
+
+
+// Sent when you have a bigger carstamp
+struct r_rep_big {
+  uint8_t opcode;
+  uint8_t value[VALUE_SIZE];
+}__attribute__((__packed__));
+
+struct r_rep_message {
+  uint8_t coalesce_num;
+  uint8_t m_id;
+  uint8_t opcode;
+  uint64_t l_id;
+  struct r_rep_big r_rep[MAX_R_REP_COALESCE];
+} __attribute__((__packed__));
+
+
+typedef struct r_rep_message_ud_req {
+  uint8_t unused[GRH_SIZE];
+  uint8_t r_rep_mes[ALIGNED_R_REP_SEND_SIDE];
+} r_rep_mes_ud_t;
+
+/*------------TEMPLATES----------*/
+struct r_rep_message_template {
+  uint8_t unused[ALIGNED_R_REP_SEND_SIDE];
+};
+
+struct r_message_template {
+  uint8_t unused[ALIGNED_R_SEND_SIDE];
+};
 
 
 
