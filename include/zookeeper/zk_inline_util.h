@@ -469,7 +469,7 @@ static inline void flr_poll_for_prepares(volatile zk_prep_mes_ud_t *incoming_pre
     zk_prep_mes_t *prep_mes = (zk_prep_mes_t *) &incoming_preps[buf_ptr].prepare;
     uint8_t coalesce_num = prep_mes->coalesce_num;
 		zk_prepare_t *prepare = prep_mes->prepare;
-    uint32_t incoming_l_id = prep_mes->l_id;
+    uint64_t incoming_l_id = prep_mes->l_id;
     uint64_t expected_l_id = p_writes->local_w_id + p_writes->size;
     if (prep_buf_mirror->size == MAX_PREP_BUF_SLOTS_TO_BE_POLLED) break;
 		if (p_writes->size + coalesce_num > FLR_PENDING_WRITES) break;

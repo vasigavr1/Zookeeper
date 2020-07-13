@@ -114,7 +114,7 @@ static inline void flr_check_debug_cntrs(uint32_t *credit_debug_cnt, uint32_t *w
   if (unlikely((*wait_for_preps_dbg_counter) > waiting_time)) {
     my_printf(red, "Follower %d waits for preps, committed g_id %lu \n", t_id, committed_global_w_id);
     zk_prepare_t *prep = (zk_prepare_t *)&prep_buf[pull_ptr].prepare.prepare;
-    uint32_t l_id = prep_buf[pull_ptr].prepare.l_id;
+    uint64_t l_id = prep_buf[pull_ptr].prepare.l_id;
     uint64_t g_id = prep->g_id;
     uint8_t message_opc = prep_buf[pull_ptr].prepare.opcode;
     my_printf(cyan, "Flr %d, polling on index %u,polled opc %u, 1st write opcode: %u, l_id %u, first g_id %u, expected l_id %u\n",
@@ -128,9 +128,9 @@ static inline void flr_check_debug_cntrs(uint32_t *credit_debug_cnt, uint32_t *w
               pull_ptr, message_opc, prep->opcode, l_id, g_id, p_writes->local_w_id);
     for (int i = 0; i < FLR_PREP_BUF_SLOTS; ++i) {
       if (prep_buf[i].prepare.opcode == KVS_OP_PUT) {
-        my_printf(green, "GOOD OPCODE in index %d, l_id %u \n", i, prep_buf[i].prepare.l_id);
+        my_printf(green, "GOOD OPCODE in index %d, l_id %lu \n", i, prep_buf[i].prepare.l_id);
       }
-      else my_printf(red, "BAD OPCODE in index %d, l_id %u \n", i, prep_buf[i].prepare.l_id);
+      else my_printf(red, "BAD OPCODE in index %d, l_id %lu \n", i, prep_buf[i].prepare.l_id);
 
     }
 
@@ -488,10 +488,10 @@ static inline void checks_when_leader_creates_write(zk_prep_mes_t *preps, uint32
 {
   if (ENABLE_ASSERTIONS) {
     if (inside_prep_ptr == 0) {
-      uint32_t message_l_id = preps[prep_ptr].l_id;
+      uint64_t message_l_id = preps[prep_ptr].l_id;
       if (message_l_id > MAX_PREP_COALESCE) {
         uint32_t prev_prep_ptr = (prep_ptr + PREP_FIFO_SIZE - 1) % PREP_FIFO_SIZE;
-        uint32_t prev_l_id = preps[prev_prep_ptr].l_id;
+        uint64_t prev_l_id = preps[prev_prep_ptr].l_id;
         uint8_t prev_coalesce = preps[prev_prep_ptr].coalesce_num;
         if (message_l_id != prev_l_id + prev_coalesce) {
           my_printf(red, "Current message l_id %u, previous message l_id %u , previous coalesce %u\n",

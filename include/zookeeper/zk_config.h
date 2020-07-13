@@ -46,7 +46,6 @@ struct mica_op {
 };
 
 // MULTICAST
-#define MCAST_QPS MACHINE_NUM
 #define MCAST_FLOW_NUM 2 // prepares and commits
 #define PREPARE_FLOW 0
 #define COMMIT_FLOW 1

@@ -55,7 +55,7 @@ void *leader(void *arg)
 	--------------CONNECT WITH FOLLOWERS-----------------------
 	---------------------------------------------------------*/
   setup_connections_and_spawn_stats_thread(g_id, cb, t_id);
-	if (MULTICAST_TESTING == 1) multicast_testing(mcast_cb, t_id, COM_MCAST_QP, cb, COMMIT_W_QP_ID);
+
 
 	/* -----------------------------------------------------
 	--------------DECLARATIONS------------------------------

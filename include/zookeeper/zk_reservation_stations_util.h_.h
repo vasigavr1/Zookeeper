@@ -288,7 +288,7 @@ static inline void forge_prep_wr(uint16_t prep_i, p_writes_t *p_writes,
 
   }
   if (DEBUG_PREPARES)
-    my_printf(green, "Leader %d : I BROADCAST a prepare message %d of %u prepares with size %u,  with  credits: %d, lid: %u  \n",
+    my_printf(green, "Leader %d : I BROADCAST a prepare message %d of %u prepares with size %u,  with  credits: %d, lid: %lu  \n",
               t_id, prep->opcode, coalesce_num, send_sgl[br_i].length, credits[vc][0], prep->l_id);
   form_bcast_links(prep_br_tx, PREP_BCAST_SS_BATCH, p_writes->q_info, br_i,
                    send_wr, cb->dgram_send_cq[PREP_ACK_QP_ID], "forging prepares", t_id);
@@ -427,8 +427,8 @@ static inline void ldr_insert_write(p_writes_t *p_writes, void *source, uint32_t
   // If it's the first message give it an lid
   if (inside_prep_ptr == 0) {
     p_writes->prep_fifo->backward_ptrs[prep_ptr] = w_ptr;
-    uint32_t message_l_id = (uint32_t) (p_writes->local_w_id + p_writes->size);
-    preps[prep_ptr].l_id = (uint32_t) message_l_id;
+    uint64_t message_l_id = (uint64_t) (p_writes->local_w_id + p_writes->size);
+    preps[prep_ptr].l_id = (uint64_t) message_l_id;
   }
   checks_when_leader_creates_write(preps, prep_ptr, inside_prep_ptr, p_writes, w_ptr, t_id);
 

@@ -100,14 +100,14 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 
 //---WRITES---
 
-#define WRITE_HEADER (KEY_SIZE + 2 + 8) // opcode + val_len
+#define WRITE_HEADER (KEY_SIZE + 8) // opcode + val_len
 #define W_SIZE (VALUE_SIZE + WRITE_HEADER)
 #define FLR_W_SEND_SIZE (MAX_W_COALESCE * W_SIZE)
 #define LDR_W_RECV_SIZE (GRH_SIZE + FLR_W_SEND_SIZE)
 #define FLR_W_ENABLE_INLINING ((FLR_W_SEND_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
 
 
-#define PREP_MES_HEADER 6 // opcode(1), coalesce_num(1) l_id (4)
+#define PREP_MES_HEADER 10 // opcode(1), coalesce_num(1) l_id (8)
 #define PREP_SIZE (KEY_SIZE + VALUE_SIZE + 13) // Size of a write
 #define LDR_PREP_SEND_SIZE (PREP_MES_HEADER + (MAX_PREP_COALESCE * PREP_SIZE))
 #define FLR_PREP_RECV_SIZE (GRH_SIZE + LDR_PREP_SEND_SIZE)
@@ -291,7 +291,7 @@ typedef struct zk_prepare {
 typedef struct zk_prep_message {
 	uint8_t opcode;
 	uint8_t coalesce_num;
-	uint32_t l_id; // send the bottom half of the lid
+	uint64_t l_id; // send the bottom half of the lid
 	zk_prepare_t prepare[MAX_PREP_COALESCE];
 } __attribute__((__packed__)) zk_prep_mes_t;
 
@@ -304,11 +304,10 @@ typedef struct zk_prep_message_ud_req {
 typedef struct zk_write {
   uint8_t w_num; // the first write holds the coalesce number for the entire message
   uint8_t flr_id;
-  uint8_t unused[2];
+	uint8_t opcode;
+	uint8_t val_len;
   uint32_t sess_id;
   mica_key_t key;	/* 8B */
-  uint8_t opcode;
-  uint8_t val_len;
   uint8_t value[VALUE_SIZE];
 } __attribute__((__packed__)) zk_write_t;
 
