@@ -162,7 +162,7 @@ static inline void check_ldr_p_states(p_writes_t *p_writes, uint16_t t_id)
   for (uint16_t w_i = 0; w_i < LEADER_PENDING_WRITES - p_writes->size; w_i++) {
     uint16_t ptr = (p_writes->push_ptr + w_i) % LEADER_PENDING_WRITES;
     if (p_writes->w_state[ptr] != INVALID) {
-      my_printf(red, "LDR %d push ptr %u, pull ptr %u, size %u, state %d at ptr %u \n",
+      my_printf(red, "LDR %d push ptr %u, pull ptr %u, capacity %u, state %d at ptr %u \n",
                 t_id, p_writes->push_ptr, p_writes->pull_ptr, p_writes->size, p_writes->w_state[ptr], ptr);
       print_ldr_stats(t_id);
       assert(false);
@@ -183,6 +183,7 @@ static inline void zk_check_polled_ack_and_print(zk_ack_mes_t *ack, uint16_t ack
     assert (ack->opcode == KVS_OP_ACK);
     assert(ack_num > 0 && ack_num <= FLR_PENDING_WRITES);
     assert(ack->follower_id < MACHINE_NUM);
+    assert(ack->follower_id != machine_id);
   }
   if (DEBUG_ACKS)
     my_printf(yellow, "Leader %d ack opcode %d with %d acks for l_id %lu, oldest lid %lu, at offset %d from flr %u \n",
@@ -244,7 +245,7 @@ static inline void zk_check_polled_commit_and_print(zk_com_mes_t *com,
     if ((pull_lid > l_id) ||
        ((l_id + com_num > pull_lid + p_writes->size) &&
        (!USE_QUORUM))) {
-      my_printf(red, "Flr %d, COMMIT: received lid %lu, com_num %u, pull_lid %lu, p_writes size  %u \n",
+      my_printf(red, "Flr %d, COMMIT: received lid %lu, com_num %u, pull_lid %lu, p_writes capacity  %u \n",
                 t_id, l_id, com_num, pull_lid, p_writes->size);
       print_ldr_stats(t_id);
       assert(false);
@@ -282,7 +283,7 @@ static inline void zk_check_polled_prep_and_print(zk_prep_mes_t* prep_mes,
                                                   p_writes_t *p_writes,
                                                   uint8_t coalesce_num,
                                                   uint32_t buf_ptr,
-                                                  uint32_t incoming_l_id,
+                                                  uint64_t incoming_l_id,
                                                   uint64_t expected_l_id,
                                                   volatile zk_prep_mes_ud_t *incoming_preps,
                                                   uint16_t t_id)
@@ -326,6 +327,7 @@ zk_check_prepare_and_print(zk_prepare_t *prepare,
       assert(prepare->g_id > committed_global_w_id);
     assert(prepare->val_len == VALUE_SIZE >> SHIFT_BITS);
     assert(p_writes->w_state[push_ptr] == INVALID);
+
   }
   if (DEBUG_PREPARES)
     my_printf(green, "Flr %u, prep_i %u new write at ptr %u with g_id %lu and flr id %u, value_len %u \n",
@@ -381,7 +383,7 @@ static inline void zk_checks_and_stats_on_bcasting_commits(zk_com_fifo_t *com_fi
     assert(br_i <= COMMIT_CREDITS);
     assert(com_fifo != NULL);
     if (com_fifo->size > COMMIT_FIFO_SIZE)
-      printf("com fifo size %u/%d \n", com_fifo->size, COMMIT_FIFO_SIZE);
+      printf("com fifo capacity %u/%d \n", com_fifo->size, COMMIT_FIFO_SIZE);
     assert(com_fifo->size <= COMMIT_FIFO_SIZE);
     assert(com_mes->com_num > 0 && com_mes->com_num <= MAX_LIDS_IN_A_COMMIT);
   }
@@ -412,7 +414,7 @@ static inline void check_stats_prints_when_sending_acks(zk_ack_mes_t *ack,
   }
 
   if (DEBUG_ACKS)
-    my_printf(yellow, "Flr %d is sending an ack for lid %lu and ack num %d and flr id %d, p_writes size %u/%d \n",
+    my_printf(yellow, "Flr %d is sending an ack for lid %lu and ack num %d and flr id %d, p_writes capacity %u/%d \n",
               t_id, l_id_to_send, ack->ack_num, ack->follower_id, p_writes->size, FLR_PENDING_WRITES);
   if (ENABLE_ASSERTIONS) assert(ack->ack_num > 0 && ack->ack_num <= FLR_PENDING_WRITES);
 }
@@ -435,7 +437,7 @@ static inline void checks_and_print_when_forging_write(zk_w_mes_t *w_mes, uint16
 {
   for (uint16_t i = 0; i < coalesce_num; i++) {
     if (DEBUG_WRITES)
-      printf("Write %d, session id %u, val-len %u, message size %d\n", i,
+      printf("Write %d, session id %u, val-len %u, message capacity %d\n", i,
              w_mes->write[i].sess_id,
              w_mes->write[i].val_len,
              length);
@@ -445,7 +447,7 @@ static inline void checks_and_print_when_forging_write(zk_w_mes_t *w_mes, uint16
     }
   }
   if (DEBUG_WRITES)
-    my_printf(green, "Follower %d : I sent a write message %d of %u writes with size %u,  with  credits: %d \n",
+    my_printf(green, "Follower %d : I sent a write message %d of %u writes with capacity %u,  with  credits: %d \n",
               t_id, w_mes->write->opcode, coalesce_num, length, credits);
 }
 
@@ -456,7 +458,7 @@ static inline void checks_and_stats_when_sending_write(p_writes_t *p_writes,
                                                        uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
-    assert(p_writes->w_fifo->size >= coalesce_num);
+    assert(p_writes->w_fifo->capacity >= coalesce_num);
     (*outstanding_writes) += coalesce_num;
   }
   if (ENABLE_STAT_COUNTING) {
@@ -500,7 +502,7 @@ static inline void checks_when_leader_creates_write(zk_prep_mes_t *preps, uint32
       }
     }
     if (p_writes->w_state[w_ptr] != INVALID)
-      my_printf(red, "Leader %u w_state %d at w_ptr %u, g_id %lu, cache hits %lu, size %u \n",
+      my_printf(red, "Leader %u w_state %d at w_ptr %u, g_id %lu, cache hits %lu, capacity %u \n",
                 t_id, p_writes->w_state[w_ptr], w_ptr, p_writes->g_id[w_ptr],
                 t_stats[t_id].cache_hits_per_thread, p_writes->size);
     //printf("Sent %d, Valid %d, Ready %d \n", SENT, VALID, READY);

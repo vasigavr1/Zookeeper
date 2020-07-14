@@ -14,21 +14,20 @@
  * -----------------------POLL COMMITS------------------------------
  * ---------------------------------------------------------------------*/
 
-static inline void flr_increases_write_credits(p_writes_t *p_writes,
+static inline void flr_increases_write_credits(context_t *ctx,
+                                               p_writes_t *p_writes,
                                                uint16_t com_ptr,
-                                               struct fifo *remote_w_buf,
-                                               uint16_t *credits,
-                                               uint8_t flr_id,
-                                               uint16_t t_id)
+                                               struct fifo *remote_w_buf)
 {
-  if (p_writes->flr_id[com_ptr] == flr_id) {
-    (*credits) += remove_from_the_mirrored_buffer(remote_w_buf,
-                                                  1, t_id, 0,
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
+  if (p_writes->flr_id[com_ptr] == ctx->m_id) {
+    (qp_meta->credits) += remove_from_the_mirrored_buffer(remote_w_buf,
+                                                  1, ctx->t_id, 0,
                                                   LEADER_W_BUF_SLOTS);
     if (DEBUG_WRITES)
-      my_printf(yellow, "Received a credit, credits: %u \n", *credits);
+      my_printf(yellow, "Received a credit, credits: %u \n", qp_meta->credits);
   }
-  if (ENABLE_ASSERTIONS) assert(*credits <= W_CREDITS);
+  if (ENABLE_ASSERTIONS) assert(qp_meta->credits <= W_CREDITS);
 }
 
 static inline bool zk_write_not_ready(zk_com_mes_t *com,
@@ -75,6 +74,8 @@ static inline void fill_p_writes_entry(p_writes_t *p_writes,
 {
   uint32_t push_ptr = p_writes->push_ptr;
   p_writes->ptrs_to_ops[push_ptr] = prepare;
+  printf("%u \n", push_ptr);
+  print_key(&prepare->key);
   p_writes->g_id[push_ptr] = prepare->g_id;
   p_writes->flr_id[push_ptr] = prepare->flr_id;
   p_writes->is_local[push_ptr] = prepare->flr_id == flr_id;
@@ -279,7 +280,7 @@ static inline void forge_prep_wr(uint16_t prep_i, p_writes_t *p_writes,
   for (i = 0; i < coalesce_num; i++) {
     p_writes->w_state[(backward_ptr + i) % LEADER_PENDING_WRITES] = SENT;
     if (DEBUG_PREPARES)
-      printf("Prepare %d, val-len %u, message size %d\n", i, prep->prepare[i].val_len,
+      printf("Prepare %d, val-len %u, message capacity %d\n", i, prep->prepare[i].val_len,
              send_sgl[br_i].length);
     if (ENABLE_ASSERTIONS) {
       assert(prep->prepare[i].val_len == VALUE_SIZE >> SHIFT_BITS);
@@ -288,7 +289,7 @@ static inline void forge_prep_wr(uint16_t prep_i, p_writes_t *p_writes,
 
   }
   if (DEBUG_PREPARES)
-    my_printf(green, "Leader %d : I BROADCAST a prepare message %d of %u prepares with size %u,  with  credits: %d, lid: %lu  \n",
+    my_printf(green, "Leader %d : I BROADCAST a prepare message %d of %u prepares with capacity %u,  with  credits: %d, lid: %lu  \n",
               t_id, prep->opcode, coalesce_num, send_sgl[br_i].length, credits[vc][0], prep->l_id);
   form_bcast_links(prep_br_tx, PREP_BCAST_SS_BATCH, p_writes->q_info, br_i,
                    send_wr, cb->dgram_send_cq[PREP_ACK_QP_ID], "forging prepares", t_id);
@@ -301,28 +302,28 @@ static inline void forge_prep_wr(uint16_t prep_i, p_writes_t *p_writes,
 
 
 // Form the Write work request for the write
-static inline void forge_w_wr(p_writes_t *p_writes,
-                              hrd_ctrl_blk_t *cb, struct ibv_sge *w_send_sgl,
-                              struct ibv_send_wr *w_send_wr, uint64_t *w_tx,
-                              uint16_t w_i, uint16_t credits,
-                              uint16_t t_id)
+static inline void forge_w_wr(context_t *ctx, p_writes_t *p_writes,
+                              uint16_t w_i)
 {
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
+  struct ibv_sge *send_sgl = qp_meta->send_sgl;
+  struct ibv_send_wr *send_wr = qp_meta->send_wr;
   zk_w_mes_t *w_mes_fifo = (zk_w_mes_t *) p_writes->w_fifo->fifo;
   uint32_t w_ptr = p_writes->w_fifo->pull_ptr;
   zk_w_mes_t *w_mes = &w_mes_fifo[w_ptr];
   uint16_t coalesce_num = w_mes->write[0].w_num;
   if (ENABLE_ASSERTIONS) assert(coalesce_num > 0);
-  w_send_sgl[w_i].length = coalesce_num * sizeof(zk_write_t);
-  w_send_sgl[w_i].addr = (uint64_t) (uintptr_t) w_mes;
+  send_sgl[w_i].length = coalesce_num * sizeof(zk_write_t);
+  send_sgl[w_i].addr = (uint64_t) (uintptr_t) w_mes;
 
-  checks_and_print_when_forging_write(w_mes, coalesce_num, w_send_sgl[w_i].length,
-                                      credits, t_id);
+  checks_and_print_when_forging_write(w_mes, coalesce_num, send_sgl[w_i].length,
+                                      qp_meta->credits, ctx->t_id);
 
-  selective_signaling_for_unicast(w_tx, WRITE_SS_BATCH, w_send_wr,
-                                  w_i, cb->dgram_send_cq[COMMIT_W_QP_ID], FLR_W_ENABLE_INLINING,
-                                  "sending credits", t_id);
+  selective_signaling_for_unicast(&qp_meta->sent_tx, qp_meta->ss_batch, send_wr,
+                                  w_i, qp_meta->send_cq, qp_meta->enable_inlining,
+                                  "sending credits", ctx->t_id);
   // Have the last message point to the current message
-  if (w_i > 0) w_send_wr[w_i - 1].next = &w_send_wr[w_i];
+  if (w_i > 0) send_wr[w_i - 1].next = &send_wr[w_i];
 
 }
 
@@ -460,7 +461,7 @@ static inline void flr_insert_write(p_writes_t *p_writes, zk_trace_op_t *op, uin
              flr_id, session_id);
   //    printf("Passed session id %u to the op in message %u, with inside ptr %u\n",
   //           *(uint32_t*)w_mes[w_ptr].write[inside_w_ptr].session_id, w_ptr, inside_w_ptr);
-  p_writes->w_fifo->size++;
+  p_writes->w_fifo->capacity++;
   w_mes[w_ptr].write[0].w_num++;
   p_writes->w_index_to_req_array[session_id] = op->index_to_req_array;
 

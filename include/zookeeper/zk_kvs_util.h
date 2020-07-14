@@ -90,13 +90,20 @@ static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_prepare_t **preps
 
   for(op_i = 0; op_i < op_num; op_i++) {
     zk_prepare_t *op = preps[(pull_ptr + op_i) % max_op_size];
+    printf("%u %u \n", (pull_ptr + op_i) % max_op_size,  max_op_size);
+    print_key(&op->key);
     KVS_locate_one_bucket(op_i, bkt, &op->key, bkt_ptr, tag, kv_ptr, KVS);
   }
   KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
 
   for(op_i = 0; op_i < op_num; op_i++) {
-    if (ENABLE_ASSERTIONS && kv_ptr[op_i] == NULL) assert(false);
     zk_prepare_t *op = preps[(pull_ptr + op_i) % max_op_size];
+    if (ENABLE_ASSERTIONS && kv_ptr[op_i] == NULL) {
+      my_printf(red, "Kptr  is null %u\n", op_i);
+      cust_print_key("Op", &op->key);
+      assert(false);
+    }
+
     bool key_found = memcmp(&kv_ptr[op_i]->key, &op->key, KEY_SIZE) == 0;
     if (unlikely(ENABLE_ASSERTIONS && !key_found)) {
       my_printf(red, "Kvs update miss %u\n", op_i);

@@ -62,7 +62,7 @@ struct key_home{
 	uint8_t worker;
 };
 
-/* Fixed-size 16 byte keys */
+/* Fixed-capacity 16 byte keys */
 struct cache_key {
 	cache_meta meta; // This should be 8B (unused --> in mica)
 	unsigned int bkt			:32;

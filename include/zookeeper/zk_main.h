@@ -1,6 +1,7 @@
 #ifndef ZOOKEEPER_MAIN_H
 #define ZOOKEEPER_MAIN_H
 
+#include <rdma_gen_util.h>
 #include "top.h"
 
 
@@ -54,7 +55,7 @@
 typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 
 
-#define MIN_SS_BATCH 127// The minimum SS batch
+
 
 
 //--------FOLLOWER Flow Control
@@ -219,6 +220,7 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 #define FLR_MAX_CREDIT_RECV (W_CREDITS / LDR_CREDITS_IN_MESSAGE)
 #define ACK_SEND_SS_BATCH MAX(MIN_SS_BATCH, (FLR_MAX_ACK_WRS + 2))
 #define R_SS_BATCH MAX(MIN_SS_BATCH, (MAX_R_WRS + 2))
+#define R_FIFO_SIZE (SESSIONS_PER_THREAD + 1)
 
 
 #define MAX_LIDS_IN_A_COMMIT MIN(FLR_PENDING_WRITES, LEADER_PENDING_WRITES)
@@ -450,7 +452,6 @@ typedef struct prep_fifo {
 	zk_prep_mes_t *prep_message;
 	uint32_t push_ptr;
 	uint32_t pull_ptr;
-	uint32_t bcast_pull_ptr;
 	uint32_t bcast_size; // number of prepares not messages!
 	uint32_t size;
 	uint32_t backward_ptrs[PREP_FIFO_SIZE];
@@ -461,7 +462,7 @@ typedef struct prep_fifo {
 typedef struct pending_writes {
 	uint64_t *g_id;
 	zk_prep_fifo_t *prep_fifo;
-  struct fifo *w_fifo;
+  fifo_t *w_fifo;
 	zk_prepare_t **ptrs_to_ops;
 	uint64_t local_w_id;
 	uint32_t *session_id;
@@ -482,6 +483,8 @@ typedef struct pending_writes {
 	bool all_sessions_stalled;
   quorum_info_t *q_info;
 } p_writes_t;
+
+
 
 
 // struct for the follower to keep track of the acks it has sent
@@ -554,6 +557,8 @@ extern bool is_leader;
 void *follower(void *arg);
 void *leader(void *arg);
 void print_latency_stats(void);
+
+
 
 
 

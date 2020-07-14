@@ -31,7 +31,7 @@ void zk_print_parameters_in_the_start()
 
 void zk_static_assert_compile_parameters()
 {
-  //static_assert(!ENABLE_CLIENTS, " ");
+  static_assert(sizeof(zk_w_mes_t) == FLR_W_SEND_SIZE, " ");
 
   //if (ENABLE_MULTICAST) assert(MCAST_FLR_RECV_QP_NUM == MCAST_GROUPS_PER_FLOW);
   assert(LEADER_MACHINE < MACHINE_NUM);
@@ -52,8 +52,8 @@ void zk_static_assert_compile_parameters()
 
 
 //
-//  my_printf(yellow, "WRITE: size of write recv slot %d size of w_message %lu , "
-//           "value size %d, size of cache op %lu , sizeof udreq w message %lu \n",
+//  my_printf(yellow, "WRITE: capacity of write recv slot %d capacity of w_message %lu , "
+//           "value capacity %d, capacity of cache op %lu , sizeof udreq w message %lu \n",
 //         LDR_W_RECV_SIZE, sizeof(zk_w_mes_t), VALUE_SIZE,
 //         sizeof(struct cache_op), sizeof(zk_w_mes_ud_t));
   assert(sizeof(zk_w_mes_ud_t) == LDR_W_RECV_SIZE);
@@ -170,7 +170,7 @@ p_writes_t* set_up_pending_writes(uint32_t size, struct ibv_send_wr *prep_send_w
   p_writes->is_local = (bool *) malloc(size * sizeof(bool));
   p_writes->stalled = (bool *) malloc(SESSIONS_PER_THREAD * sizeof(bool));
   p_writes->ptrs_to_ops = (zk_prepare_t **) malloc(size * sizeof(zk_prepare_t *));
-  if (protocol == FOLLOWER) init_fifo(&(p_writes->w_fifo), W_FIFO_SIZE * sizeof(zk_w_mes_t), 1);
+  //if (protocol == FOLLOWER) init_fifo(&(p_writes->w_fifo), W_FIFO_SIZE * sizeof(zk_w_mes_t), 1);
   memset(p_writes->g_id, 0, size * sizeof(uint64_t));
   p_writes->prep_fifo = (zk_prep_fifo_t *) calloc(1, sizeof(zk_prep_fifo_t));
     p_writes->prep_fifo->prep_message =
@@ -190,13 +190,13 @@ p_writes_t* set_up_pending_writes(uint32_t size, struct ibv_send_wr *prep_send_w
       }
     }
   } else { // PROTOCOL == FOLLOWER
-    zk_w_mes_t *writes = (zk_w_mes_t *) p_writes->w_fifo->fifo;
-    for (i = 0; i < W_FIFO_SIZE; i++) {
-      for (uint16_t j = 0; j < MAX_W_COALESCE; j++) {
-        writes[i].write[j].opcode = KVS_OP_PUT;
-        writes[i].write[j].val_len = VALUE_SIZE >> SHIFT_BITS;
-      }
-    }
+    //zk_w_mes_t *writes = (zk_w_mes_t *) p_writes->w_fifo->fifo;
+    //for (i = 0; i < W_FIFO_SIZE; i++) {
+    //  for (uint16_t j = 0; j < MAX_W_COALESCE; j++) {
+    //    writes[i].write[j].opcode = KVS_OP_PUT;
+    //    writes[i].write[j].val_len = VALUE_SIZE >> SHIFT_BITS;
+    //  }
+    //}
   }
   return p_writes;
 }
@@ -298,7 +298,7 @@ void set_up_ldr_WRs(struct ibv_send_wr *prep_send_wr, struct ibv_sge *prep_send_
   uint16_t i, j;
   //BROADCAST WRs and credit Receives
   for (j = 0; j < MAX_BCAST_BATCH; j++) { // Number of Broadcasts
-    if (LEADER_PREPARE_ENABLE_INLINING == 0) prep_send_sgl[j].lkey = prep_mr->lkey;
+    if (!LEADER_PREPARE_ENABLE_INLINING) prep_send_sgl[j].lkey = prep_mr->lkey;
     if (!COM_ENABLE_INLINING) com_send_sgl[j].lkey = com_mr->lkey;
 
     for (i = 0; i < MESSAGES_IN_BCAST; i++) {
