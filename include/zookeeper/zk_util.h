@@ -4,6 +4,7 @@
 #include "../../../shared/include/multicast/multicast.h"
 #include "kvs.h"
 #include "zk_main.h"
+#include <network_context.h>
 //#include "init_connect.h"
 
 
@@ -50,8 +51,7 @@ void print_latency_stats(void);
 ---------------------------------------------------------------------------*/
 
 // Set up a struct that stores pending writes
-p_writes_t* set_up_pending_writes(uint32_t size, struct ibv_send_wr*,
-																	struct ibv_send_wr*, uint16_t credits[][MACHINE_NUM],
+p_writes_t* set_up_pending_writes(context_t *ctx, uint32_t size,
 																	protocol_t);
 
 /* ---------------------------------------------------------------------------

@@ -362,7 +362,7 @@ static inline void zk_checks_and_stats_on_bcasting_prepares(p_writes_t *p_writes
                                                             uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
-    assert(p_writes->prep_fifo->bcast_size >= coalesce_num);
+    assert(p_writes->prep_fifo->net_capacity >= coalesce_num);
     (*outstanding_prepares) +=
       coalesce_num;
   }
@@ -374,7 +374,7 @@ static inline void zk_checks_and_stats_on_bcasting_prepares(p_writes_t *p_writes
 }
 
 
-static inline void zk_checks_and_stats_on_bcasting_commits(zk_com_fifo_t *com_fifo,
+static inline void zk_checks_and_stats_on_bcasting_commits(fifo_t *com_fifo,
                                                            zk_com_mes_t *com_mes,
                                                            uint16_t  br_i,
                                                            uint16_t t_id)
@@ -382,9 +382,9 @@ static inline void zk_checks_and_stats_on_bcasting_commits(zk_com_fifo_t *com_fi
   if (ENABLE_ASSERTIONS) {
     assert(br_i <= COMMIT_CREDITS);
     assert(com_fifo != NULL);
-    if (com_fifo->size > COMMIT_FIFO_SIZE)
-      printf("com fifo capacity %u/%d \n", com_fifo->size, COMMIT_FIFO_SIZE);
-    assert(com_fifo->size <= COMMIT_FIFO_SIZE);
+    if (com_fifo->capacity > COMMIT_FIFO_SIZE)
+      printf("com fifo capacity %u/%d \n", com_fifo->capacity, COMMIT_FIFO_SIZE);
+    assert(com_fifo->capacity <= COMMIT_FIFO_SIZE);
     assert(com_mes->com_num > 0 && com_mes->com_num <= MAX_LIDS_IN_A_COMMIT);
   }
   if (ENABLE_STAT_COUNTING) {

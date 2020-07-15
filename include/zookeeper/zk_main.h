@@ -461,7 +461,7 @@ typedef struct prep_fifo {
 // A data structute that keeps track of the outstanding writes
 typedef struct pending_writes {
 	uint64_t *g_id;
-	zk_prep_fifo_t *prep_fifo;
+	fifo_t *prep_fifo;
   fifo_t *w_fifo;
 	zk_prepare_t **ptrs_to_ops;
 	uint64_t local_w_id;

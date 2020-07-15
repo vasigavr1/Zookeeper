@@ -10,111 +10,65 @@ void *leader(void *arg)
 	struct thread_params params = *(struct thread_params *) arg;
 	uint16_t t_id = (uint16_t) params.id;
   uint32_t g_id = get_gid((uint8_t) machine_id, t_id);
-  uint16_t follower_id = t_id;
 
 	if (ENABLE_MULTICAST == 1 && t_id == 0)
 		my_printf(cyan, "MULTICAST IS ENABLED\n");
 	protocol_t protocol = LEADER;
 
-	int *recv_q_depths, *send_q_depths;
-  set_up_queue_depths_ldr_flr(&recv_q_depths, &send_q_depths, protocol);
-	hrd_ctrl_blk_t *cb = hrd_ctrl_blk_init(t_id,	/* local_hid */
-												0, -1, /* port_index, numa_node_id */
-												0, 0,	/* #conn qps, uc */
-												NULL, 0, -1,	/* prealloc conn recv_buf, recv_buf capacity, key */
-												LEADER_QP_NUM, LEADER_BUF_SIZE,	/* num_dgram_qps, dgram_buf_size */
-												MASTER_SHM_KEY + t_id, /* key */
-												recv_q_depths, send_q_depths); /* Depth of the dgram RECV Q*/
 
-  uint32_t ack_buf_push_ptr = 0, ack_buf_pull_ptr = 0,
-    w_buf_push_ptr = 0, w_buf_pull_ptr = 0,
-    r_buf_push_ptr = 0, r_buf_pull_ptr = 0;
-  zk_ack_mes_ud_t *ack_buffer = (zk_ack_mes_ud_t *)(cb->dgram_buf);
-  volatile zk_w_mes_ud_t *w_buffer =
-    (volatile zk_w_mes_ud_t *)(cb->dgram_buf + LEADER_ACK_BUF_SIZE);
-  volatile struct  r_message_ud_req *r_buffer =
-    (volatile r_mes_ud_t *)(cb->dgram_buf + LEADER_ACK_BUF_SIZE + LEADER_W_BUF_SIZE);
-	/* ---------------------------------------------------------------------------
-	------------------------------MULTICAST SET UP-------------------------------
-	---------------------------------------------------------------------------*/
+  context_t *ctx = create_ctx((uint8_t) machine_id,
+                              (uint16_t) params.id,
+                              (uint16_t) LEADER_QP_NUM,
+                              local_ip);
 
-	mcast_cb_t *mcast_cb = NULL;
-	// need to init mcast_cb before sync, such that we can post recvs
-	if (ENABLE_MULTICAST) {
-    mcast_cb = zk_init_multicast(t_id, (void *) cb->dgram_buf, protocol);
-		assert(mcast_cb != NULL);
-	}
-  /* ---------------------------------------------------------------------------
-	------------------------------PREPOST RECVS-------------------------------
-	---------------------------------------------------------------------------*/
-	/* Fill the RECV queue that receives the Broadcasts, we need to do this early */
-	if (WRITE_RATIO > 0) {
-    // Pre post receives only for writes
-    pre_post_recvs(&w_buf_push_ptr, cb->dgram_qp[COMMIT_W_QP_ID], cb->dgram_buf_mr->lkey, (void *)w_buffer,
-                   LEADER_W_BUF_SLOTS, LDR_MAX_RECV_W_WRS, COMMIT_W_QP_ID, (uint32_t) LDR_W_RECV_SIZE);
+  per_qp_meta_t *qp_meta = ctx->qp_meta;
 
-    pre_post_recvs(&r_buf_push_ptr, cb->dgram_qp[R_QP_ID], cb->dgram_buf_mr->lkey, (void *)r_buffer,
-                   LEADER_R_BUF_SLOTS, MAX_RECV_R_WRS, R_QP_ID, (uint32_t) LDR_R_RECV_SIZE);
-  }
+  ///
+  create_per_qp_meta(&qp_meta[PREP_ACK_QP_ID], LDR_MAX_PREP_WRS,
+                     LDR_MAX_RECV_ACK_WRS, SEND_BCAST_LDR_RECV_UNI,
+                     FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_ACK_BUF_SLOTS,
+                     LDR_ACK_RECV_SIZE, LDR_PREP_SEND_SIZE, ENABLE_MULTICAST, false,
+                     PREP_MCAST_QP, LEADER_MACHINE, PREP_FIFO_SIZE, PREPARE_CREDITS);
+  ///
+  create_per_qp_meta(&qp_meta[COMMIT_W_QP_ID], LDR_MAX_COM_WRS,
+                     LDR_MAX_RECV_W_WRS, SEND_BCAST_LDR_RECV_UNI,
+                     FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_W_BUF_SLOTS,
+                     LDR_W_RECV_SIZE, LDR_COM_SEND_SIZE, ENABLE_MULTICAST, false,
+                     COM_MCAST_QP, LEADER_MACHINE, COMMIT_FIFO_SIZE, COMMIT_CREDITS);
+  ///
+  create_per_qp_meta(&qp_meta[FC_QP_ID], 0, LDR_MAX_CREDIT_RECV, RECV_CREDITS,
+                     0, FOLLOWER_MACHINE_NUM, 0,
+                     0, 0, false, false,
+                     0, LEADER_MACHINE, 0, 0);
+  ///
+  create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_REP_WRS, MAX_RECV_R_WRS, SEND_UNI_REP_LDR_RECV_UNI_REQ,
+                     1, 1, LEADER_R_BUF_SLOTS,
+                     R_RECV_SIZE, R_REP_SEND_SIZE, false, false,
+                     0, LEADER_MACHINE, R_REP_FIFO_SIZE, 0);
+
+
+
+  set_up_ctx(ctx);
+
+
+  post_recvs_with_recv_info(qp_meta[R_QP_ID].recv_info,
+                            qp_meta[R_QP_ID].recv_wr_num);
+
+  post_recvs_with_recv_info(qp_meta[COMMIT_W_QP_ID].recv_info,
+                            qp_meta[COMMIT_W_QP_ID].recv_wr_num);
+
 
 	/* -----------------------------------------------------
 	--------------CONNECT WITH FOLLOWERS-----------------------
 	---------------------------------------------------------*/
-  setup_connections_and_spawn_stats_thread(g_id, cb, t_id);
-
+  setup_connections_and_spawn_stats_thread(g_id, ctx->cb, t_id);
+  init_ctx_send_wrs(ctx);
 
 	/* -----------------------------------------------------
 	--------------DECLARATIONS------------------------------
 	---------------------------------------------------------*/
-  // PREP_ACK_QP_ID 0: send Prepares -- receive ACKs
-	struct ibv_send_wr prep_send_wr[LDR_MAX_PREP_WRS];
-	struct ibv_sge prep_send_sgl[MAX_BCAST_BATCH], ack_recv_sgl[LDR_MAX_RECV_ACK_WRS];
-	struct ibv_wc ack_recv_wc[LDR_MAX_RECV_ACK_WRS];
-	struct ibv_recv_wr ack_recv_wr[LDR_MAX_RECV_ACK_WRS];
 
-  // W_QP_ID 1: send Commits  -- receive Writes
-  struct ibv_send_wr com_send_wr[LDR_MAX_COM_WRS];
-  struct ibv_sge com_send_sgl[MAX_BCAST_BATCH], w_recv_sgl[LDR_MAX_RECV_W_WRS];
-  struct ibv_wc w_recv_wc[LDR_MAX_RECV_W_WRS];
-  struct ibv_recv_wr w_recv_wr[LDR_MAX_RECV_W_WRS];
-
-  // FC_QP_ID 2: receive Credits (LDR Does not send credits)
-  struct ibv_sge credit_recv_sgl;
-  struct ibv_wc credit_wc[LDR_MAX_CREDIT_RECV];
-  struct ibv_recv_wr credit_recv_wr[LDR_MAX_CREDIT_RECV];
-
-  // R_QP_ID 3: send R_Reps  -- receive Reads
-  struct ibv_send_wr r_rep_send_wr[MAX_R_REP_WRS];
-  struct ibv_sge r_rep_send_sgl[MAX_R_REP_WRS], r_recv_sgl[MAX_RECV_R_WRS];
-  struct ibv_wc r_recv_wc[MAX_RECV_R_WRS];
-  struct ibv_recv_wr r_recv_wr[MAX_RECV_R_WRS];
-
- 	uint16_t credits[LDR_VC_NUM][MACHINE_NUM];
 	uint32_t trace_iter = 0;
-  uint64_t prep_br_tx = 0, commit_br_tx = 0;
-
-  recv_info_t *w_recv_info, *ack_recv_info, *cred_recv_info, *r_recv_info;
-  uint32_t lkey = cb->dgram_buf_mr->lkey;
-  w_recv_info =  init_recv_info(lkey, w_buf_push_ptr, LEADER_W_BUF_SLOTS,
-                                (uint32_t) LDR_W_RECV_SIZE, LDR_MAX_RECV_W_WRS,
-                                cb->dgram_qp[COMMIT_W_QP_ID],
-                                LDR_MAX_RECV_W_WRS,
-                                w_recv_wr, w_recv_sgl,
-                                (void*) w_buffer);
-
-  ack_recv_info = init_recv_info(lkey, ack_buf_push_ptr, LEADER_ACK_BUF_SLOTS,
-                                 (uint32_t) LDR_ACK_RECV_SIZE, 0, cb->dgram_qp[PREP_ACK_QP_ID],
-                                 LDR_MAX_RECV_ACK_WRS, ack_recv_wr, ack_recv_sgl,
-                                 (void*) ack_buffer);
-
-  cred_recv_info = init_recv_info(lkey, 0, 0, 64, 0, cb->dgram_qp[FC_QP_ID],
-                                 LDR_MAX_CREDIT_RECV, credit_recv_wr, &credit_recv_sgl,
-                                 (void*) cb->dgram_buf);
-
-  r_recv_info = init_recv_info(lkey, r_buf_push_ptr, LEADER_R_BUF_SLOTS,
-                               (uint32_t) R_RECV_SIZE, 0, cb->dgram_qp[R_QP_ID],
-                               MAX_RECV_R_WRS, r_recv_wr, r_recv_sgl,
-                               (void*) r_buffer);
 
 
 	latency_info_t latency_info = {
@@ -124,15 +78,28 @@ void *leader(void *arg)
 
 	zk_trace_op_t *ops = (zk_trace_op_t *) calloc((size_t) ZK_TRACE_BATCH, sizeof(zk_trace_op_t));
   zk_resp_t *resp = (zk_resp_t*) calloc((size_t) ZK_TRACE_BATCH, sizeof(zk_resp_t));
-  zk_com_fifo_t *com_fifo = set_up_ldr_ops(resp, t_id);
-	struct ibv_mr *prep_mr, *com_mr;
+
+  zk_com_mes_t *commits = (zk_com_mes_t *) qp_meta[COMMIT_W_QP_ID].send_fifo->fifo;
+  for(int i = 0; i <  ZK_TRACE_BATCH; i++) resp[i].type = EMPTY;
+  for(int i = 0; i <  COMMIT_FIFO_SIZE; i++) {
+    commits[i].opcode = KVS_OP_PUT;
+  }
+
+  zk_prep_mes_t *preps = (zk_prep_mes_t *) qp_meta[PREP_ACK_QP_ID].send_fifo->fifo;
+  for (int i = 0; i < PREP_FIFO_SIZE; i++) {
+    preps[i].opcode = KVS_OP_PUT;
+    for (uint16_t j = 0; j < MAX_PREP_COALESCE; j++) {
+      preps[i].prepare[j].opcode = KVS_OP_PUT;
+      preps[i].prepare[j].val_len = VALUE_SIZE >> SHIFT_BITS;
+    }
+  }
 
 
 
-  p_writes_t *p_writes = set_up_pending_writes(LEADER_PENDING_WRITES, prep_send_wr,
-                                               com_send_wr, credits, protocol);
-  void *prep_buf = (void *) p_writes->prep_fifo->prep_message;
-  set_up_ldr_mrs(&prep_mr, prep_buf, &com_mr, (void *) com_fifo->commits, cb);
+
+  p_writes_t *p_writes = set_up_pending_writes(ctx, LEADER_PENDING_WRITES,
+                                               protocol);
+  p_writes->prep_fifo = qp_meta[PREP_ACK_QP_ID].send_fifo;
 
   // There are no explicit credits and therefore we need to represent the remote prepare buffer somehow,
   // such that we can interpret the incoming acks correctly
@@ -141,16 +108,6 @@ void *leader(void *arg)
   uint16_t *fifo = (uint16_t *)remote_prep_buf[FOLLOWER_MACHINE_NUM -1].fifo;
   assert(fifo[FLR_PREP_BUF_SLOTS -1] == 0);
 
-	/* ---------------------------------------------------------------------------
-	------------------------------INITIALIZE STATIC STRUCTUREs--------------------
-		---------------------------------------------------------------------------*/
-  for (uint8_t m_id = 0; m_id < MACHINE_NUM; m_id++) {
-    credits[PREP_VC][m_id] = PREPARE_CREDITS;
-    credits[COMM_VC][m_id] = COMMIT_CREDITS;
-  }
-  set_up_ldr_WRs(prep_send_wr, prep_send_sgl,
-                  com_send_wr, com_send_sgl,
-                  t_id, follower_id, prep_mr, com_mr, mcast_cb);
 
 	// TRACE
 	trace_t *trace = NULL;
@@ -163,7 +120,7 @@ void *leader(void *arg)
   uint16_t last_session = 0;
   uint32_t wait_for_gid_dbg_counter = 0, wait_for_acks_dbg_counter = 0;
   uint32_t credit_debug_cnt[LDR_VC_NUM] = {0}, time_out_cnt[LDR_VC_NUM] = {0};
-  uint32_t outstanding_prepares = 0, completed_but_not_polled_writes = 0;
+  uint32_t outstanding_prepares = 0;
 	struct timespec start, end;
   if (t_id == 0) my_printf(green, "Leader %d  reached the loop \n", t_id);
 
@@ -180,10 +137,9 @@ void *leader(void *arg)
 		------------------------------ POLL FOR ACKS--------------------------------
 		---------------------------------------------------------------------------*/
     if (WRITE_RATIO > 0)
-      ldr_poll_for_acks(ack_buffer, &ack_buf_pull_ptr, p_writes,
-                        credits, cb->dgram_recv_cq[PREP_ACK_QP_ID], ack_recv_wc, ack_recv_info,
+      ldr_poll_for_acks(ctx, p_writes,
                         remote_prep_buf,
-                        t_id, &wait_for_acks_dbg_counter, &outstanding_prepares);
+                        &wait_for_acks_dbg_counter, &outstanding_prepares);
 
 /* ---------------------------------------------------------------------------
 		------------------------------ PROPAGATE UPDATES--------------------------
@@ -193,17 +149,14 @@ void *leader(void *arg)
        * to send the commits and clear the p_write buffer space. The reason behind that
        * is that we do not want to wait for the commit broadcast to happen to clear the
        * buffer space for new writes*/
-      ldr_propagate_updates(p_writes, com_fifo, resp, &latency_info, t_id, &wait_for_gid_dbg_counter);
+      ldr_propagate_updates(ctx, p_writes, &latency_info, &wait_for_gid_dbg_counter);
 
 
     /* ---------------------------------------------------------------------------
 		------------------------------ BROADCAST COMMITS--------------------------
 		---------------------------------------------------------------------------*/
     if (WRITE_RATIO > 0)
-      broadcast_commits(p_writes, credits, cb, com_fifo,
-                        &commit_br_tx, credit_wc,
-                        com_send_sgl, com_send_wr, cred_recv_info, time_out_cnt,
-                        w_recv_info, t_id);
+      broadcast_commits(ctx, p_writes, time_out_cnt);
     /* ---------------------------------------------------------------------------
     ------------------------------PROBE THE CACHE--------------------------------------
     ---------------------------------------------------------------------------*/
@@ -211,7 +164,7 @@ void *leader(void *arg)
 
     // Get a new batch from the trace, pass it through the cache and create
     // the appropriate prepare messages
-		trace_iter = zk_batch_from_trace_to_KVS(trace_iter, t_id, trace, ops,
+		trace_iter = zk_batch_from_trace_to_KVS(ctx, trace_iter, t_id, trace, ops,
                                             (uint8_t) FOLLOWER_MACHINE_NUM, p_writes, resp,
                                             &latency_info,  &last_session, protocol);
 
@@ -220,8 +173,7 @@ void *leader(void *arg)
 		---------------------------------------------------------------------------*/
     // get local and remote writes back to back to increase the write batch
     if (WRITE_RATIO > 0)
-      poll_for_writes(w_buffer, &w_buf_pull_ptr, p_writes, cb->dgram_recv_cq[COMMIT_W_QP_ID],
-                      w_recv_wc, w_recv_info, &completed_but_not_polled_writes, t_id);
+      poll_for_writes(ctx, p_writes);
 
     /* ---------------------------------------------------------------------------
 		------------------------------GET GLOBAL WRITE IDS--------------------------
@@ -236,8 +188,7 @@ void *leader(void *arg)
 		if (WRITE_RATIO > 0)
 			/* Poll for credits - Perform broadcasts
 				 Post the appropriate number of credit receives before sending anything */
-      broadcast_prepares(p_writes, credits, cb, prep_send_sgl, prep_send_wr, &prep_br_tx, ack_recv_info,
-                         remote_prep_buf, time_out_cnt, &outstanding_prepares, t_id);
+      broadcast_prepares(ctx, p_writes, remote_prep_buf, time_out_cnt, &outstanding_prepares);
     if (ENABLE_ASSERTIONS) {
       assert(p_writes->size <= LEADER_PENDING_WRITES);
       for (uint16_t i = 0; i < LEADER_PENDING_WRITES - p_writes->size; i++) {

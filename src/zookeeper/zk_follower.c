@@ -23,19 +23,19 @@ void *follower(void *arg)
   per_qp_meta_t *qp_meta = ctx->qp_meta;
   ///
   create_per_qp_meta(&qp_meta[PREP_ACK_QP_ID], FLR_MAX_ACK_WRS,
-                     FLR_MAX_RECV_PREP_WRS, SEND_UNICAST_REP_RECV_LDR_BCAST, 1, 1, 3 * PREPARE_CREDITS,
+                     FLR_MAX_RECV_PREP_WRS, SEND_UNI_REP_RECV_LDR_BCAST, 1, 1, 3 * PREPARE_CREDITS,
                      FLR_PREP_RECV_SIZE, FLR_ACK_SEND_SIZE, false, ENABLE_MULTICAST, PREP_MCAST_QP,
                      LEADER_MACHINE, 0, 0);
   ///
   create_per_qp_meta(&qp_meta[COMMIT_W_QP_ID], FLR_MAX_W_WRS,
-                     FLR_MAX_RECV_COM_WRS, SEND_UNICAST_REP_RECV_LDR_BCAST, 1, 1, COMMIT_CREDITS,
+                     FLR_MAX_RECV_COM_WRS, SEND_UNI_REP_RECV_LDR_BCAST, 1, 1, COMMIT_CREDITS,
                      FLR_COM_RECV_SIZE, FLR_W_SEND_SIZE, false, ENABLE_MULTICAST, COM_MCAST_QP,
                      LEADER_MACHINE, W_FIFO_SIZE, W_CREDITS);
   ///
   create_per_qp_meta(&qp_meta[FC_QP_ID], FLR_MAX_CREDIT_WRS, 0, SEND_CREDITS_LDR_RECV_NONE, 1,
                      0, 0, 0, 0, false, false, 0, LEADER_MACHINE, 0, 0);
   ///
-  create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_WRS, MAX_RECV_R_REP_WRS, SEND_UNICAST_REQ_RECV_LDR_REP, 1, 1,
+  create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_WRS, MAX_RECV_R_REP_WRS, SEND_UNI_REQ_RECV_LDR_REP, 1, 1,
                      R_CREDITS, R_REP_RECV_SIZE, R_SEND_SIZE, false, false, 0, LEADER_MACHINE, R_FIFO_SIZE, R_CREDITS);
 
   set_up_ctx(ctx);
@@ -72,7 +72,7 @@ void *follower(void *arg)
 
   zk_resp_t *resp = (zk_resp_t *) calloc(ZK_TRACE_BATCH, sizeof(zk_resp_t));
   zk_trace_op_t *ops = (zk_trace_op_t *) calloc(ZK_TRACE_BATCH, sizeof(zk_trace_op_t));
-  p_writes_t *p_writes = set_up_pending_writes(FLR_PENDING_WRITES, NULL, NULL, NULL, protocol);
+  p_writes_t *p_writes = set_up_pending_writes(ctx, FLR_PENDING_WRITES, protocol);
   p_acks_t *p_acks = (p_acks_t *) calloc(1, sizeof(p_acks_t));
   zk_ack_mes_t *ack = (zk_ack_mes_t *) calloc(1, sizeof(zk_ack_mes_t));
 
@@ -174,7 +174,7 @@ void *follower(void *arg)
   ---------------------------------------------------------------------------*/
 
   // Propagate the updates before probing the cache
-    trace_iter = zk_batch_from_trace_to_KVS(trace_iter, t_id, trace, ops, flr_id,
+    trace_iter = zk_batch_from_trace_to_KVS(ctx, trace_iter, t_id, trace, ops, flr_id,
                                             p_writes, resp, &latency_info, &last_session, protocol);
 
 

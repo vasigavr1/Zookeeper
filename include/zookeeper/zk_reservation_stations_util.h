@@ -21,13 +21,13 @@ static inline void flr_increases_write_credits(context_t *ctx,
 {
   per_qp_meta_t *qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
   if (p_writes->flr_id[com_ptr] == ctx->m_id) {
-    (qp_meta->credits) += remove_from_the_mirrored_buffer(remote_w_buf,
+    (*qp_meta->credits) += remove_from_the_mirrored_buffer(remote_w_buf,
                                                   1, ctx->t_id, 0,
                                                   LEADER_W_BUF_SLOTS);
     if (DEBUG_WRITES)
-      my_printf(yellow, "Received a credit, credits: %u \n", qp_meta->credits);
+      my_printf(yellow, "Received a credit, credits: %u \n", *qp_meta->credits);
   }
-  if (ENABLE_ASSERTIONS) assert(qp_meta->credits <= W_CREDITS);
+  if (ENABLE_ASSERTIONS) assert(*qp_meta->credits <= W_CREDITS);
 }
 
 static inline bool zk_write_not_ready(zk_com_mes_t *com,
@@ -196,15 +196,17 @@ static inline void zk_signal_completion_and_bookkeepfor_writes(p_writes_t *p_wri
 //------------------------------ BROADCASTS -----------------------------
 //---------------------------------------------------------------------------*/
 
-static inline void zk_reset_prep_message(p_writes_t *p_writes,
+static inline void zk_reset_prep_message(fifo_t *fifo,
                                          uint8_t coalesce_num,
                                          uint16_t t_id)
 {
   // This message has been sent do not add other prepares to it!
   if (coalesce_num < MAX_PREP_COALESCE) {
 //      my_printf(yellow, "Broadcasting prep with coalesce num %u \n", coalesce_num);
-    MOD_INCR(p_writes->prep_fifo->push_ptr, PREP_FIFO_SIZE);
-    p_writes->prep_fifo->prep_message[p_writes->prep_fifo->push_ptr].coalesce_num = 0;
+    MOD_INCR(fifo->push_ptr, fifo->max_size);
+    zk_prep_mes_t *prep_mes = (zk_prep_mes_t *) fifo->fifo;
+    prep_mes[fifo->push_ptr].coalesce_num = 0;
+    //p_writes->prep_fifo->prep_message[p_writes->prep_fifo->push_ptr].coalesce_num = 0;
   }
 }
 
@@ -243,43 +245,43 @@ static inline void ldr_poll_credits(struct ibv_cq* credit_recv_cq, struct ibv_wc
 
 
 // Form Broadcast work requests for the leader
-static inline void forge_commit_wrs(zk_com_mes_t *com_mes, quorum_info_t *q_info, uint16_t t_id,
-                                    uint16_t br_i, hrd_ctrl_blk_t *cb, struct ibv_sge *com_send_sgl,
-                                    struct ibv_send_wr *send_wr,  uint64_t *commit_br_tx,
-                                    uint16_t credits[][MACHINE_NUM])
+static inline void forge_commit_wrs(context_t *ctx, zk_com_mes_t *com_mes,
+                                    quorum_info_t *q_info, uint16_t br_i)
 {
-  com_send_sgl[br_i].addr = (uint64_t) (uintptr_t) com_mes;
-  com_send_sgl[br_i].length = LDR_COM_SEND_SIZE;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
+  qp_meta->send_sgl[br_i].addr = (uint64_t) (uintptr_t) com_mes;
+  qp_meta->send_sgl[br_i].length = LDR_COM_SEND_SIZE;
   if (ENABLE_ASSERTIONS) {
-    assert(com_send_sgl[br_i].length <= LDR_COM_SEND_SIZE);
+    assert(qp_meta->send_sgl[br_i].length <= LDR_COM_SEND_SIZE);
     if (!USE_QUORUM)
       assert(com_mes->com_num <= LEADER_PENDING_WRITES);
   }
   //my_printf(green, "Leader %d : I BROADCAST a message with %d commits, opcode %d credits: %d, l_id %lu \n",
   //             t_id, com_mes->com_num, com_mes->opcode, credits[COMM_VC][1], com_mes->l_id);
-  form_bcast_links(commit_br_tx, COM_BCAST_SS_BATCH, q_info, br_i,
-                   send_wr, cb->dgram_send_cq[COMMIT_W_QP_ID], "forging commits", t_id);
+  form_bcast_links(&qp_meta->sent_tx, qp_meta->ss_batch, q_info, br_i,
+                   qp_meta->send_wr, qp_meta->send_cq, "forging commits", ctx->t_id);
 
 }
 
 
 // Form the Broadcast work request for the prepare
-static inline void forge_prep_wr(uint16_t prep_i, p_writes_t *p_writes,
-                                 hrd_ctrl_blk_t *cb, struct ibv_sge *send_sgl,
-                                 struct ibv_send_wr *send_wr, uint64_t *prep_br_tx,
-                                 uint16_t br_i, uint16_t credits[][MACHINE_NUM],
-                                 uint8_t vc, uint16_t t_id) {
-  uint16_t i;
-  zk_prep_mes_t *prep = &p_writes->prep_fifo->prep_message[prep_i];
-  uint32_t backward_ptr = p_writes->prep_fifo->backward_ptrs[prep_i];
+static inline void forge_prep_wr(context_t *ctx,
+                                 p_writes_t *p_writes,
+                                 zk_prep_mes_t *prep,
+                                 uint16_t br_i)
+{
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PREP_ACK_QP_ID];
+  fifo_t *send_fifo = qp_meta->send_fifo;
+
+  uint32_t backward_ptr = send_fifo->backwards_ptrs[send_fifo->pull_ptr];
   uint16_t coalesce_num = prep->coalesce_num;
-  send_sgl[br_i].length = PREP_MES_HEADER + coalesce_num * sizeof(zk_prepare_t);
-  send_sgl[br_i].addr = (uint64_t) (uintptr_t) prep;
-  for (i = 0; i < coalesce_num; i++) {
+  qp_meta->send_sgl[br_i].length = PREP_MES_HEADER + coalesce_num * sizeof(zk_prepare_t);
+  qp_meta->send_sgl[br_i].addr = (uint64_t) (uintptr_t) prep;
+  for (uint16_t i = 0; i < coalesce_num; i++) {
     p_writes->w_state[(backward_ptr + i) % LEADER_PENDING_WRITES] = SENT;
     if (DEBUG_PREPARES)
       printf("Prepare %d, val-len %u, message capacity %d\n", i, prep->prepare[i].val_len,
-             send_sgl[br_i].length);
+             qp_meta->send_sgl[br_i].length);
     if (ENABLE_ASSERTIONS) {
       assert(prep->prepare[i].val_len == VALUE_SIZE >> SHIFT_BITS);
       assert(prep->prepare[i].opcode == KVS_OP_PUT);
@@ -287,10 +289,10 @@ static inline void forge_prep_wr(uint16_t prep_i, p_writes_t *p_writes,
 
   }
   if (DEBUG_PREPARES)
-    my_printf(green, "Leader %d : I BROADCAST a prepare message %d of %u prepares with capacity %u,  with  credits: %d, lid: %lu  \n",
-              t_id, prep->opcode, coalesce_num, send_sgl[br_i].length, credits[vc][0], prep->l_id);
-  form_bcast_links(prep_br_tx, PREP_BCAST_SS_BATCH, p_writes->q_info, br_i,
-                   send_wr, cb->dgram_send_cq[PREP_ACK_QP_ID], "forging prepares", t_id);
+    my_printf(green, "Leader %d : I BROADCAST a prepare message %d of %u prepares with total size %u,  with  credits: %d, lid: %lu  \n",
+              ctx->t_id, prep->opcode, coalesce_num, qp_meta->send_sgl[br_i].length, qp_meta->credits[0], prep->l_id);
+  form_bcast_links(&qp_meta->sent_tx, qp_meta->ss_batch, p_writes->q_info, br_i,
+                   qp_meta->send_wr, qp_meta->send_cq, "forging prepares", ctx->t_id);
 }
 
 
@@ -317,7 +319,7 @@ static inline void forge_w_wr(context_t *ctx, p_writes_t *p_writes,
   assert(send_wr[w_i].sg_list == &send_sgl[w_i]);
 
   checks_and_print_when_forging_write(w_mes, coalesce_num, send_sgl[w_i].length,
-                                      qp_meta->credits, ctx->t_id);
+                                      *qp_meta->credits, ctx->t_id);
 
   selective_signaling_for_unicast(&qp_meta->sent_tx, qp_meta->ss_batch, send_wr,
                                   w_i, qp_meta->send_cq, qp_meta->enable_inlining,
@@ -342,17 +344,21 @@ static inline void reset_write_mes(p_writes_t *p_writes,
 
 
 // Add the acked gid to the appropriate commit message
-static inline void zk_create_commit_message(zk_com_fifo_t *com_fifo, uint64_t l_id, uint16_t update_op_i)
+static inline void zk_create_commit_message(fifo_t *com_fifo, uint64_t l_id, uint16_t update_op_i)
 {
   //l_id refers the oldest write to commit (writes go from l_id to l_id + update_op_i)
-  uint16_t com_mes_i = com_fifo->push_ptr;
-  assert(com_mes_i < COMMIT_FIFO_SIZE);
+  uint16_t com_mes_i = (uint16_t) com_fifo->push_ptr;
+  if (ENABLE_ASSERTIONS) {
+    assert(com_fifo->max_size == COMMIT_FIFO_SIZE);
+    assert(com_fifo->capacity <= com_fifo->max_size);
+    assert(com_mes_i < com_fifo->max_size);
+  }
   uint16_t last_com_mes_i;
-  zk_com_mes_t *commit_messages = com_fifo->commits;
-  assert(com_fifo->size <= COMMIT_FIFO_SIZE);
+  zk_com_mes_t *commit_messages = (zk_com_mes_t *) com_fifo->fifo;
+
   // see if the new batch can fit with the previous one -- no reason why it should not
-  if (com_fifo->size > 0) {
-    last_com_mes_i = (COMMIT_FIFO_SIZE + com_mes_i - 1) % COMMIT_FIFO_SIZE;
+  if (com_fifo->capacity > 0) {
+    last_com_mes_i = (uint16_t) ((com_fifo->max_size + com_mes_i - 1) % com_fifo->max_size);
     zk_com_mes_t *last_commit = &commit_messages[last_com_mes_i];
     uint64_t last_l_id = last_commit->l_id;
     last_l_id += last_commit->com_num;
@@ -367,10 +373,10 @@ static inline void zk_create_commit_message(zk_com_fifo_t *com_fifo, uint64_t l_
   zk_com_mes_t *new_commit = &commit_messages[com_mes_i];
   new_commit->l_id = l_id;
   new_commit->com_num = update_op_i;
-  com_fifo->size++;
-  MOD_INCR(com_fifo->push_ptr, COMMIT_FIFO_SIZE);
+  com_fifo->capacity++;
+  MOD_INCR(com_fifo->push_ptr, com_fifo->max_size);
   if (ENABLE_ASSERTIONS) {
-    assert(com_fifo->size <= COMMIT_FIFO_SIZE );
+    assert(com_fifo->capacity <= com_fifo->max_size );
   }
 }
 
@@ -401,11 +407,14 @@ static inline void fill_write(zk_write_t *write, mica_key_t key, uint8_t opcode,
 }
 
 // Insert a new local or remote write to the leader pending writes
-static inline void ldr_insert_write(p_writes_t *p_writes, void *source, uint32_t session_id,
-                                    bool local, uint16_t t_id)
+static inline void ldr_insert_write(context_t *ctx, p_writes_t *p_writes,
+                                    void *source, uint32_t session_id,
+                                    bool local)
 {
-  zk_prep_mes_t *preps = p_writes->prep_fifo->prep_message;
-  uint32_t prep_ptr = p_writes->prep_fifo->push_ptr;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PREP_ACK_QP_ID];
+  fifo_t *send_fifo =  qp_meta->send_fifo;
+  zk_prep_mes_t *preps = (zk_prep_mes_t *) send_fifo->fifo;
+  uint32_t prep_ptr = send_fifo->push_ptr;
   uint32_t inside_prep_ptr = preps[prep_ptr].coalesce_num;
   uint32_t w_ptr = p_writes->push_ptr;
   zk_prepare_t *prep = &preps[prep_ptr].prepare[inside_prep_ptr];
@@ -427,11 +436,12 @@ static inline void ldr_insert_write(p_writes_t *p_writes, void *source, uint32_t
 
   // If it's the first message give it an lid
   if (inside_prep_ptr == 0) {
-    p_writes->prep_fifo->backward_ptrs[prep_ptr] = w_ptr;
+    send_fifo->backwards_ptrs[prep_ptr] = w_ptr;
     uint64_t message_l_id = (uint64_t) (p_writes->local_w_id + p_writes->size);
     preps[prep_ptr].l_id = (uint64_t) message_l_id;
   }
-  checks_when_leader_creates_write(preps, prep_ptr, inside_prep_ptr, p_writes, w_ptr, t_id);
+  checks_when_leader_creates_write(preps, prep_ptr, inside_prep_ptr,
+                                   p_writes, w_ptr, ctx->t_id);
 
   // Bookkeeping
   p_writes->w_state[w_ptr] = VALID;
@@ -440,11 +450,11 @@ static inline void ldr_insert_write(p_writes_t *p_writes, void *source, uint32_t
   p_writes->session_id[w_ptr] = (uint32_t) session_id;
   MOD_INCR(p_writes->push_ptr, LEADER_PENDING_WRITES);
   p_writes->size++;
-  p_writes->prep_fifo->bcast_size++;
+  send_fifo->net_capacity++;
   preps[prep_ptr].coalesce_num++;
   if (preps[prep_ptr].coalesce_num == MAX_PREP_COALESCE) {
-    MOD_INCR(p_writes->prep_fifo->push_ptr, PREP_FIFO_SIZE);
-    preps[p_writes->prep_fifo->push_ptr].coalesce_num = 0;
+    MOD_INCR(send_fifo->push_ptr, PREP_FIFO_SIZE);
+    preps[send_fifo->push_ptr].coalesce_num = 0;
   }
 }
 
@@ -472,7 +482,7 @@ static inline void flr_insert_write(p_writes_t *p_writes, zk_trace_op_t *op, uin
   }
 }
 
-static inline void zk_fill_trace_op(trace_t *trace, zk_trace_op_t *op, uint16_t op_i,
+static inline void zk_fill_trace_op(context_t *ctx, trace_t *trace, zk_trace_op_t *op, uint16_t op_i,
                                     int working_session, protocol_t protocol,
                                     p_writes_t *p_writes, uint8_t flr_id,
                                     latency_info_t *latency_info, uint16_t t_id)
@@ -496,7 +506,7 @@ static inline void zk_fill_trace_op(trace_t *trace, zk_trace_op_t *op, uint16_t 
         flr_insert_write(p_writes, op, (uint32_t) working_session, flr_id, t_id);
         break;
       case LEADER:
-        ldr_insert_write(p_writes, (void *) op, (uint32_t) working_session, true, t_id);
+        ldr_insert_write(ctx, p_writes, (void *) op, (uint32_t) working_session, true);
         break;
       default:
         if (ENABLE_ASSERTIONS) assert(false);

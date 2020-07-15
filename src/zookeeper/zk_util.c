@@ -118,9 +118,7 @@ void init_fifo(struct fifo **fifo, uint32_t max_size, uint32_t fifos_num)
 }
 
 // Initialize the quorum info that contains the system configuration
-quorum_info_t* set_up_q_info(struct ibv_send_wr *prep_send_wr,
-                             struct ibv_send_wr *com_send_wr,
-                             uint16_t credits[][MACHINE_NUM])
+quorum_info_t* set_up_q_info(context_t *ctx)
 {
   quorum_info_t * q_info = (quorum_info_t *) calloc(1, sizeof(quorum_info_t));
   q_info->active_num = REM_MACH_NUM;
@@ -134,30 +132,28 @@ quorum_info_t* set_up_q_info(struct ibv_send_wr *prep_send_wr,
 
   q_info->num_of_send_wrs = Q_INFO_NUM_SEND_WRS;
   q_info->send_wrs_ptrs = (struct ibv_send_wr **) malloc(Q_INFO_NUM_SEND_WRS * sizeof(struct ibv_send_wr *));
-  q_info->send_wrs_ptrs[0] = prep_send_wr;
-  q_info->send_wrs_ptrs[1] = com_send_wr;
+  q_info->send_wrs_ptrs[0] = ctx->qp_meta[PREP_ACK_QP_ID].send_wr;
+  q_info->send_wrs_ptrs[1] = ctx->qp_meta[COMMIT_W_QP_ID].send_wr;
 
   q_info->num_of_credit_targets = Q_INFO_CREDIT_TARGETS;
   q_info->targets = malloc (q_info->num_of_credit_targets * sizeof(uint16_t));
   q_info->targets[0] = W_CREDITS;
   q_info->targets[1] = COMMIT_CREDITS;
   q_info->credit_ptrs = malloc(q_info->num_of_credit_targets * sizeof(uint16_t*));
-  q_info->credit_ptrs[0] = credits[PREP_VC];
-  q_info->credit_ptrs[1] = credits[COMM_VC];
+  q_info->credit_ptrs[0] = ctx->qp_meta[PREP_ACK_QP_ID].credits;
+  q_info->credit_ptrs[1] = ctx->qp_meta[COMMIT_W_QP_ID].credits;
   return q_info;
 
 }
 
 
 // Set up a struct that stores pending writes
-p_writes_t* set_up_pending_writes(uint32_t size, struct ibv_send_wr *prep_send_wr,
-                                  struct ibv_send_wr *com_send_wr,
-                                  uint16_t credits[][MACHINE_NUM],
+p_writes_t* set_up_pending_writes(context_t *ctx, uint32_t size,
                                   protocol_t protocol)
 {
   int i;
   p_writes_t* p_writes = (p_writes_t*) calloc(1,sizeof(p_writes_t));
-  p_writes->q_info = protocol == LEADER ? set_up_q_info(prep_send_wr, com_send_wr, credits) : NULL;
+  p_writes->q_info = protocol == LEADER ? set_up_q_info(ctx) : NULL;
 
 
   p_writes->g_id = (uint64_t *) malloc(size * sizeof(uint64_t));
@@ -172,23 +168,23 @@ p_writes_t* set_up_pending_writes(uint32_t size, struct ibv_send_wr *prep_send_w
   p_writes->ptrs_to_ops = (zk_prepare_t **) malloc(size * sizeof(zk_prepare_t *));
   //if (protocol == FOLLOWER) init_fifo(&(p_writes->w_fifo), W_FIFO_SIZE * sizeof(zk_w_mes_t), 1);
   memset(p_writes->g_id, 0, size * sizeof(uint64_t));
-  p_writes->prep_fifo = (zk_prep_fifo_t *) calloc(1, sizeof(zk_prep_fifo_t));
-    p_writes->prep_fifo->prep_message =
-    (zk_prep_mes_t *) calloc(PREP_FIFO_SIZE, sizeof(zk_prep_mes_t));
-  assert(p_writes->prep_fifo != NULL);
+  //p_writes->prep_fifo = (zk_prep_fifo_t *) calloc(1, sizeof(zk_prep_fifo_t));
+  //  p_writes->prep_fifo->prep_message =
+  //  (zk_prep_mes_t *) calloc(PREP_FIFO_SIZE, sizeof(zk_prep_mes_t));
+  //assert(p_writes->prep_fifo != NULL);
   for (i = 0; i < SESSIONS_PER_THREAD; i++) p_writes->stalled[i] = false;
   for (i = 0; i < size; i++) {
     p_writes->w_state[i] = INVALID;
   }
   if (protocol == LEADER) {
-    zk_prep_mes_t *preps = p_writes->prep_fifo->prep_message;
-    for (i = 0; i < PREP_FIFO_SIZE; i++) {
-      preps[i].opcode = KVS_OP_PUT;
-      for (uint16_t j = 0; j < MAX_PREP_COALESCE; j++) {
-        preps[i].prepare[j].opcode = KVS_OP_PUT;
-        preps[i].prepare[j].val_len = VALUE_SIZE >> SHIFT_BITS;
-      }
-    }
+    //zk_prep_mes_t *preps = p_writes->prep_fifo->prep_message;
+    //for (i = 0; i < PREP_FIFO_SIZE; i++) {
+    //  preps[i].opcode = KVS_OP_PUT;
+    //  for (uint16_t j = 0; j < MAX_PREP_COALESCE; j++) {
+    //    preps[i].prepare[j].opcode = KVS_OP_PUT;
+    //    preps[i].prepare[j].val_len = VALUE_SIZE >> SHIFT_BITS;
+    //  }
+    //}
   } else { // PROTOCOL == FOLLOWER
     //zk_w_mes_t *writes = (zk_w_mes_t *) p_writes->w_fifo->fifo;
     //for (i = 0; i < W_FIFO_SIZE; i++) {
