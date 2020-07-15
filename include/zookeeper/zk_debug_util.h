@@ -238,7 +238,7 @@ static inline void zk_check_polled_commit_and_print(zk_com_mes_t *com,
 {
   if (DEBUG_COMMITS)
     my_printf(yellow, "Flr %d com opcode %d with %d coms for l_id %lu, "
-              "oldest lid %lu, at offset %d at address %u \n",
+              "oldest lid %lu, at offset %d at address %p \n",
               t_id, com->opcode, com_num, l_id, pull_lid, buf_ptr, (void*) com);
   if (ENABLE_ASSERTIONS) {
     assert(com->opcode == KVS_OP_PUT);

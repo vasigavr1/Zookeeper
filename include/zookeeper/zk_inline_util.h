@@ -4,7 +4,7 @@
 
 #include "zk_kvs_util.h"
 #include "zk_debug_util.h"
-#include "zk_reservation_stations_util.h_.h"
+#include "zk_reservation_stations_util.h"
 
 /* ---------------------------------------------------------------------------
 //------------------------------TRACE --------------------------------
@@ -579,15 +579,17 @@ static inline void send_writes_to_the_ldr(context_t *ctx,  p_writes_t *p_writes,
   struct ibv_send_wr *bad_send_wr;
   uint16_t w_i = 0;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
+  fifo_t *send_fifo = qp_meta->send_fifo;
+  assert(send_fifo == p_writes->w_fifo);
 
-  while (p_writes->w_fifo->capacity > 0 && qp_meta->credits > 0) {
+  while (send_fifo->capacity > 0 && qp_meta->credits > 0) {
     if (DEBUG_WRITES)
       printf("FLR %d has %u writes to send credits %d\n", ctx->t_id,
-             p_writes->w_fifo->capacity, qp_meta->credits);
+             send_fifo->capacity, qp_meta->credits);
     // Create the messages
     forge_w_wr(ctx, p_writes, w_i);
-    zk_w_mes_t *w_mes_fifo = (zk_w_mes_t *) p_writes->w_fifo->fifo;
-    uint32_t w_ptr = p_writes->w_fifo->pull_ptr;
+    zk_w_mes_t *w_mes_fifo = (zk_w_mes_t *) send_fifo->fifo;
+    uint32_t w_ptr = send_fifo->pull_ptr;
     zk_w_mes_t *w_mes = &w_mes_fifo[w_ptr];
     uint16_t coalesce_num = w_mes->write[0].w_num;
     qp_meta->credits--;
@@ -595,12 +597,26 @@ static inline void send_writes_to_the_ldr(context_t *ctx,  p_writes_t *p_writes,
     reset_write_mes(p_writes, w_mes_fifo, coalesce_num, ctx->t_id);
     add_to_the_mirrored_buffer(remote_w_buf, (uint8_t) coalesce_num, 1,
                                LEADER_W_BUF_SLOTS, p_writes->q_info);
-    MOD_INCR(p_writes->w_fifo->pull_ptr, W_FIFO_SIZE);
-    p_writes->w_fifo->capacity -= coalesce_num;
+    MOD_INCR(send_fifo->pull_ptr, send_fifo->max_size);
+    send_fifo->capacity -= coalesce_num;
     w_i++;
   }
   if (w_i > 0) {
+    //printf("W_i %u, length %u, address %p/ %p \n", w_i, qp_meta->send_wr[0].sg_list->length,
+    //       (void *)qp_meta->send_wr[0].sg_list->addr, send_fifo->fifo);
     qp_meta->send_wr[w_i - 1].next = NULL;
+    if (ENABLE_ASSERTIONS) {
+      assert(qp_meta->send_qp == ctx->cb->dgram_qp[COMMIT_W_QP_ID]);
+      assert(qp_meta->send_wr[0].sg_list == &qp_meta->send_sgl[0]);
+      assert(qp_meta->send_wr[0].wr.ud.ah == rem_qp[LEADER_MACHINE][ctx->t_id][COMMIT_W_QP_ID].ah);
+      assert(qp_meta->send_wr[0].opcode == IBV_WR_SEND);
+      assert(qp_meta->send_wr[0].num_sge == 1);
+      if (!qp_meta->enable_inlining) {
+        assert(qp_meta->send_wr[0].sg_list->lkey == qp_meta->mr->lkey);
+        //assert(qp_meta->send_wr[0].send_flags == IBV_SEND_SIGNALED);
+        assert(!qp_meta->enable_inlining);
+      }
+    }
     int ret = ibv_post_send(qp_meta->send_qp, &qp_meta->send_wr[0], &bad_send_wr);
     CPE(ret, "Broadcast ibv_post_send error", ret);
   }
@@ -646,6 +662,7 @@ static inline void poll_for_coms(context_t *ctx,
         goto END_WHILE;
 
       assert(l_id + com_i - pull_lid < FLR_PENDING_WRITES);
+
 			p_writes->w_state[com_ptr] = READY;
       flr_increases_write_credits(ctx, p_writes, com_ptr, remote_w_buf);
       MOD_INCR(com_ptr, FLR_PENDING_WRITES);

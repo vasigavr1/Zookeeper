@@ -57,7 +57,7 @@ set(ZK_SOURCE_FILES
         include/zookeeper/zk_kvs_util.h
         include/zookeeper/zk_opcodes.h
         include/zookeeper/zk_debug_util.h
-        include/zookeeper/zk_reservation_stations_util.h_.h
+        include/zookeeper/zk_reservation_stations_util.h
         )
 
 

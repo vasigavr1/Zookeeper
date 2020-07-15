@@ -41,7 +41,7 @@ void *leader(void *arg)
 	mcast_cb_t *mcast_cb = NULL;
 	// need to init mcast_cb before sync, such that we can post recvs
 	if (ENABLE_MULTICAST) {
-    mcast_cb = zk_init_multicast(t_id, cb, protocol);
+    mcast_cb = zk_init_multicast(t_id, (void *) cb->dgram_buf, protocol);
 		assert(mcast_cb != NULL);
 	}
   /* ---------------------------------------------------------------------------

@@ -74,8 +74,6 @@ static inline void fill_p_writes_entry(p_writes_t *p_writes,
 {
   uint32_t push_ptr = p_writes->push_ptr;
   p_writes->ptrs_to_ops[push_ptr] = prepare;
-  printf("%u \n", push_ptr);
-  print_key(&prepare->key);
   p_writes->g_id[push_ptr] = prepare->g_id;
   p_writes->flr_id[push_ptr] = prepare->flr_id;
   p_writes->is_local[push_ptr] = prepare->flr_id == flr_id;
@@ -178,8 +176,8 @@ static inline void zk_signal_completion_and_bookkeepfor_writes(p_writes_t *p_wri
       uint32_t sess_id = p_writes->session_id[pull_ptr];
       signal_completion_to_client(p_writes->session_id[pull_ptr],
                                   p_writes->w_index_to_req_array[sess_id], t_id);
-      if (DEBUG_WRITES)
-        my_printf(cyan, "Found a local req freeing session %d \n", p_writes->session_id[pull_ptr]);
+      //if (DEBUG_WRITES)
+      //  my_printf(cyan, "Found a local req freeing session %d \n", p_writes->session_id[pull_ptr]);
       p_writes->stalled[sess_id] = false;
       p_writes->all_sessions_stalled = false;
       p_writes->is_local[pull_ptr] = false;
@@ -315,6 +313,8 @@ static inline void forge_w_wr(context_t *ctx, p_writes_t *p_writes,
   if (ENABLE_ASSERTIONS) assert(coalesce_num > 0);
   send_sgl[w_i].length = coalesce_num * sizeof(zk_write_t);
   send_sgl[w_i].addr = (uint64_t) (uintptr_t) w_mes;
+
+  assert(send_wr[w_i].sg_list == &send_sgl[w_i]);
 
   checks_and_print_when_forging_write(w_mes, coalesce_num, send_sgl[w_i].length,
                                       qp_meta->credits, ctx->t_id);

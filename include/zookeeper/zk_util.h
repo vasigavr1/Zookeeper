@@ -106,7 +106,7 @@ void check_protocol(int);
 void print_latency_stats(void);
 
 
-static mcast_cb_t* zk_init_multicast(uint16_t t_id, hrd_ctrl_blk_t *cb, int protocol)
+static mcast_cb_t* zk_init_multicast(uint16_t t_id, void* recv_buffer, int protocol)
 {
 	check_protocol(protocol);
 	uint32_t *recv_q_depth = NULL;
@@ -117,8 +117,8 @@ static mcast_cb_t* zk_init_multicast(uint16_t t_id, hrd_ctrl_blk_t *cb, int prot
 
 	if (protocol == FOLLOWER) {
 		recv_q_depth = (uint32_t *) malloc(MCAST_FLR_RECV_QP_NUM * sizeof(int));
-		recv_q_depth[0] =  FLR_RECV_PREP_Q_DEPTH;
-		recv_q_depth[1] =  FLR_RECV_COM_Q_DEPTH;
+		recv_q_depth[0] = FLR_RECV_PREP_Q_DEPTH;
+		recv_q_depth[1] = FLR_RECV_COM_Q_DEPTH;
 		recv_qp_num = MCAST_FLR_RECV_QP_NUM;
 		send_num = MCAST_FLR_SEND_QP_NUM;
     recvs_from_flow = (bool *) malloc(MCAST_FLOW_NUM * sizeof(bool));
@@ -147,7 +147,7 @@ static mcast_cb_t* zk_init_multicast(uint16_t t_id, hrd_ctrl_blk_t *cb, int prot
                          group_to_send_to,
                          recvs_from_flow,
                          local_ip,
-												 (void *) cb->dgram_buf,
+                         recv_buffer,
 												 (size_t) FLR_BUF_SIZE, t_id);
 }
 
