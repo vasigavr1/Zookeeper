@@ -19,9 +19,10 @@
 #define FEED_FROM_TRACE 0
 
 
-#define MAKE_FOLLOWERS_PASSIVE 1
+#define MAKE_FOLLOWERS_PASSIVE 0
 #define DISABLE_GID_ORDERING 1
 #define DISABLE_UPDATING_KVS 0
+#define USE_REMOTE_READS 0 // TODO make this protocol dependant
 
 #define FOLLOWERS_PER_MACHINE (WORKERS_PER_MACHINE)
 #define LEADERS_PER_MACHINE (WORKERS_PER_MACHINE)
@@ -35,7 +36,7 @@
 
 
 #define MICA_VALUE_SIZE (VALUE_SIZE + (FIND_PADDING_CUST_ALIGN(VALUE_SIZE, 32)))
-#define MICA_OP_SIZE_  (20 + ((MICA_VALUE_SIZE)))
+#define MICA_OP_SIZE_  (28 + ((MICA_VALUE_SIZE)))
 #define MICA_OP_PADDING_SIZE  (FIND_PADDING(MICA_OP_SIZE_))
 
 #define MICA_OP_SIZE  (MICA_OP_SIZE_ + MICA_OP_PADDING_SIZE)
@@ -45,6 +46,7 @@ struct mica_op {
   // Cache-line -2
   struct key key;
   seqlock_t seqlock;
+  uint64_t g_id;
   uint32_t key_id; // strictly for debug
   uint8_t padding[MICA_OP_PADDING_SIZE];
 };

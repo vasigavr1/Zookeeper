@@ -2,6 +2,7 @@
 #define ZOOKEEPER_MAIN_H
 
 #include <rdma_gen_util.h>
+#include <fifo.h>
 #include "top.h"
 
 
@@ -102,10 +103,9 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 #define COMMIT_FIFO_SIZE ((COM_ENABLE_INLINING == 1) ? (COMMIT_CREDITS) : (COM_BCAST_SS_BATCH))
 
 //---WRITES---
-
-#define WRITE_HEADER (KEY_SIZE + 8) // opcode + val_len
-#define W_SIZE (VALUE_SIZE + WRITE_HEADER)
-#define FLR_W_SEND_SIZE (MAX_W_COALESCE * W_SIZE)
+#define W_MES_HEADER 1
+#define W_SIZE (VALUE_SIZE + KEY_SIZE + 7)
+#define FLR_W_SEND_SIZE (W_MES_HEADER + (MAX_W_COALESCE * W_SIZE))
 #define LDR_W_RECV_SIZE (GRH_SIZE + FLR_W_SEND_SIZE)
 #define FLR_W_ENABLE_INLINING ((FLR_W_SEND_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
 
@@ -222,7 +222,7 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 #define R_SS_BATCH MAX(MIN_SS_BATCH, (MAX_R_WRS + 2))
 #define R_FIFO_SIZE (SESSIONS_PER_THREAD + 1)
 
-
+#define FLR_PENDING_READS (SESSIONS_PER_THREAD + 1)
 #define MAX_LIDS_IN_A_COMMIT MIN(FLR_PENDING_WRITES, LEADER_PENDING_WRITES)
 
 
@@ -306,7 +306,7 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
  *  SEND_COMMITS menas it has been propagated to the
  *  cache and commits should be sent out
  * */
-typedef enum write_state {INVALID, VALID, SENT, READY, SEND_COMMITTS} w_state_t;
+typedef enum op_state {INVALID, VALID, SENT, READY, SEND_COMMITTS} w_state_t;
 
 
 // The format of an ack message
@@ -362,7 +362,6 @@ typedef struct zk_prep_message_ud_req {
 
 
 typedef struct zk_write {
-  uint8_t w_num; // the first write holds the coalesce number for the entire message
   uint8_t flr_id;
 	uint8_t opcode;
 	uint8_t val_len;
@@ -372,8 +371,9 @@ typedef struct zk_write {
 } __attribute__((__packed__)) zk_write_t;
 
 typedef struct zk_w_message {
+	uint8_t coalesce_num;
   zk_write_t write[MAX_W_COALESCE];
-} zk_w_mes_t;
+} __attribute__((__packed__)) zk_w_mes_t;
 
 
 typedef struct zk_w_message_ud_req {
@@ -386,103 +386,105 @@ typedef struct zk_w_message_ud_req {
 //-------------------------
 
 //
-struct read {
+typedef struct zk_read {
   struct key key;
-  uint8_t opcode;
-  uint32_t log_no;
-} __attribute__((__packed__));
+  uint64_t g_id;
+} __attribute__((__packed__)) zk_read_t;
 
-struct r_message {
+typedef struct zk_r_message {
   uint8_t coalesce_num;
   uint8_t m_id;
   uint64_t l_id ;
-  struct read read[R_COALESCE];
-} __attribute__((__packed__));
+  zk_read_t read[R_COALESCE];
+} __attribute__((__packed__)) zk_r_mes_t;
 
 
-typedef struct r_message_ud_req {
+typedef struct zk_r_message_ud_req {
   uint8_t unused[GRH_SIZE];
   uint8_t r_mes[ALIGNED_R_SEND_SIDE];
-} r_mes_ud_t;
+} zk_r_mes_ud_t;
 
 
-// Sent when you have a bigger carstamp
-struct r_rep_big {
+typedef struct r_rep_big {
   uint8_t opcode;
   uint8_t value[VALUE_SIZE];
-}__attribute__((__packed__));
+}__attribute__((__packed__)) zk_r_rep_big_t;
 
-struct r_rep_message {
+typedef struct r_rep_message {
   uint8_t coalesce_num;
   uint8_t m_id;
   uint8_t opcode;
   uint64_t l_id;
   struct r_rep_big r_rep[MAX_R_REP_COALESCE];
-} __attribute__((__packed__));
+} __attribute__((__packed__)) zk_r_rep_mes_t;
 
 
-typedef struct r_rep_message_ud_req {
+typedef struct zk_r_rep_message_ud_req {
   uint8_t unused[GRH_SIZE];
   uint8_t r_rep_mes[ALIGNED_R_REP_SEND_SIDE];
-} r_rep_mes_ud_t;
+} zk_r_rep_mes_ud_t;
 
 /*------------TEMPLATES----------*/
-struct r_rep_message_template {
+struct zk_r_rep_message_template {
   uint8_t unused[ALIGNED_R_REP_SEND_SIDE];
 };
 
-struct r_message_template {
+struct zk_r_message_template {
   uint8_t unused[ALIGNED_R_SEND_SIDE];
 };
 
 
 
-// The entires in the commit prep_message are distinct batches of commits
-typedef struct commit_fifo {
-  zk_com_mes_t *commits;
-  uint16_t push_ptr;
-  uint16_t pull_ptr;
-  uint32_t size; // number of commits rather than  messages
-} zk_com_fifo_t;
+
+typedef struct read_meta {
+  bool seen_larger_g_id;
+  uint8_t opcode;
+  mica_key_t key;
+  uint8_t value[VALUE_SIZE]; //
+  uint8_t *value_to_read;
+  uint32_t state;
+  uint32_t log_no;
+  uint32_t val_len;
+  uint32_t sess_id;
+  uint64_t g_id;
+} r_meta_t ;
 
 
-
-
-typedef struct prep_fifo {
-	zk_prep_mes_t *prep_message;
-	uint32_t push_ptr;
-	uint32_t pull_ptr;
-	uint32_t bcast_size; // number of prepares not messages!
-	uint32_t size;
-	uint32_t backward_ptrs[PREP_FIFO_SIZE];
-} zk_prep_fifo_t;
 
 
 // A data structute that keeps track of the outstanding writes
-typedef struct pending_writes {
+typedef struct zk_ctx {
 	uint64_t *g_id;
 	fifo_t *prep_fifo;
   fifo_t *w_fifo;
+  fifo_t *r_fifo;
+  fifo_t *r_meta;
+
 	zk_prepare_t **ptrs_to_ops;
 	uint64_t local_w_id;
+  uint64_t local_r_id;
 	uint32_t *session_id;
-	enum write_state *w_state;
-	uint32_t push_ptr;
-	uint32_t pull_ptr;
+
+	enum op_state *w_state;
+	uint32_t w_push_ptr;
+	uint32_t w_pull_ptr;
+  uint32_t w_size;
+
+
+
 	uint32_t prep_pull_ptr; // Where to pull prepares from
-	uint32_t size;
 	uint32_t unordered_ptr;
   uint64_t highest_g_id_taken;
 	uint8_t *flr_id;
 	uint8_t *acks_seen;
-  uint32_t *w_index_to_req_array; // [SESSIONS_PER_THREAD]
+  uint32_t *index_to_req_array; // [SESSIONS_PER_THREAD]
 
 
 	bool *is_local;
 	bool *stalled;
 	bool all_sessions_stalled;
   quorum_info_t *q_info;
-} p_writes_t;
+} zk_ctx_t;
 
 
 
@@ -519,11 +521,13 @@ typedef struct thread_stats { // 2 cache lines
 	long long acks_sent;
 	long long coms_sent;
   long long writes_sent;
+	uint64_t reads_sent;
 
   long long preps_sent_mes_num;
   long long acks_sent_mes_num;
   long long coms_sent_mes_num;
   long long writes_sent_mes_num;
+	uint64_t reads_sent_mes_num;
 
 
   long long received_coms;

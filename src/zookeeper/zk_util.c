@@ -4,29 +4,34 @@
 
 void zk_print_parameters_in_the_start()
 {
-  my_printf(green, "COMMIT: commit message %lu/%d, commit message ud req %llu/%d\n",
-               sizeof(zk_com_mes_t), LDR_COM_SEND_SIZE,
-               sizeof(zk_com_mes_ud_t), FLR_COM_RECV_SIZE);
-  my_printf(cyan, "ACK: ack message %lu/%d, ack message ud req %llu/%d\n",
+  my_printf(green, "---------------------------------------------------------- \n");
+  my_printf(green, "------------------------ZOOKEEPER------------------------- \n");
+  my_printf(green, "---------------------------------------------------------- \n");
+  if (ENABLE_ASSERTIONS) {
+    my_printf(green, "COMMIT: commit message %lu/%d, commit message ud req %llu/%d\n",
+              sizeof(zk_com_mes_t), LDR_COM_SEND_SIZE,
+              sizeof(zk_com_mes_ud_t), FLR_COM_RECV_SIZE);
+    my_printf(cyan, "ACK: ack message %lu/%d, ack message ud req %llu/%d\n",
               sizeof(zk_ack_mes_t), FLR_ACK_SEND_SIZE,
               sizeof(zk_ack_mes_ud_t), LDR_ACK_RECV_SIZE);
-  my_printf(yellow, "PREPARE: prepare %lu/%d, prep message %lu/%d, prep message ud req %llu/%d\n",
-                sizeof(zk_prepare_t), PREP_SIZE,
-                sizeof(zk_prep_mes_t), LDR_PREP_SEND_SIZE,
-                sizeof(zk_prep_mes_ud_t), FLR_PREP_RECV_SIZE);
-  my_printf(cyan, "Write: write %lu/%d, write message %lu/%d, write message ud req %llu/%d\n",
+    my_printf(yellow, "PREPARE: prepare %lu/%d, prep message %lu/%d, prep message ud req %llu/%d\n",
+              sizeof(zk_prepare_t), PREP_SIZE,
+              sizeof(zk_prep_mes_t), LDR_PREP_SEND_SIZE,
+              sizeof(zk_prep_mes_ud_t), FLR_PREP_RECV_SIZE);
+    my_printf(cyan, "Write: write %lu/%d, write message %lu/%d, write message ud req %llu/%d\n",
               sizeof(zk_write_t), W_SIZE,
               sizeof(zk_w_mes_t), FLR_W_SEND_SIZE,
               sizeof(zk_w_mes_ud_t), LDR_W_RECV_SIZE);
 
-  my_printf(green, "LEADER PREPARE INLINING %d, LEADER PENDING WRITES %d \n",
-               LEADER_PREPARE_ENABLE_INLINING, LEADER_PENDING_WRITES);
-  my_printf(green, "FOLLOWER WRITE INLINING %d, FOLLOWER WRITE FIFO SIZE %d \n",
-               FLR_W_ENABLE_INLINING, W_FIFO_SIZE);
-  my_printf(cyan, "PREPARE CREDITS %d, FLR PREPARE BUF SLOTS %d, FLR PREPARE BUF SIZE %d\n",
+    my_printf(green, "LEADER PREPARE INLINING %d, LEADER PENDING WRITES %d \n",
+              LEADER_PREPARE_ENABLE_INLINING, LEADER_PENDING_WRITES);
+    my_printf(green, "FOLLOWER WRITE INLINING %d, FOLLOWER WRITE FIFO SIZE %d \n",
+              FLR_W_ENABLE_INLINING, W_FIFO_SIZE);
+    my_printf(cyan, "PREPARE CREDITS %d, FLR PREPARE BUF SLOTS %d, FLR PREPARE BUF SIZE %d\n",
               PREPARE_CREDITS, FLR_PREP_BUF_SLOTS, FLR_PREP_BUF_SIZE);
 
-  my_printf(yellow, "Using Quorom %d , Quorum Machines %d \n", USE_QUORUM, LDR_QUORUM_OF_ACKS);
+    my_printf(yellow, "Using Quorom %d , Quorum Machines %d \n", USE_QUORUM, LDR_QUORUM_OF_ACKS);
+  }
 }
 
 void zk_static_assert_compile_parameters()
@@ -106,7 +111,6 @@ void dump_stats_2_file(struct stats* st){
 /* ---------------------------------------------------------------------------
 ------------------------------LEADER --------------------------------------
 ---------------------------------------------------------------------------*/
-// construct a prep_message-- max_size must be in bytes
 void init_fifo(struct fifo **fifo, uint32_t max_size, uint32_t fifos_num)
 {
   (*fifo) = (struct fifo *) malloc(fifos_num * sizeof(struct fifo));
@@ -148,36 +152,36 @@ quorum_info_t* set_up_q_info(context_t *ctx)
 
 
 // Set up a struct that stores pending writes
-p_writes_t* set_up_pending_writes(context_t *ctx, uint32_t size,
+zk_ctx_t* set_up_pending_writes(context_t *ctx, uint32_t size,
                                   protocol_t protocol)
 {
   int i;
-  p_writes_t* p_writes = (p_writes_t*) calloc(1,sizeof(p_writes_t));
-  p_writes->q_info = protocol == LEADER ? set_up_q_info(ctx) : NULL;
+  zk_ctx_t* zk_ctx = (zk_ctx_t*) calloc(1,sizeof(zk_ctx_t));
+  zk_ctx->q_info = protocol == LEADER ? set_up_q_info(ctx) : NULL;
 
 
-  p_writes->g_id = (uint64_t *) malloc(size * sizeof(uint64_t));
-  p_writes->w_state = (enum write_state *) malloc(size * sizeof(enum write_state));
-  p_writes->session_id = (uint32_t *) calloc(size, sizeof(uint32_t));
-  p_writes->acks_seen = (uint8_t *) calloc(size, sizeof(uint8_t));
-  p_writes->w_index_to_req_array = (uint32_t *) calloc(SESSIONS_PER_THREAD, sizeof(uint32_t));
+  zk_ctx->g_id = (uint64_t *) malloc(size * sizeof(uint64_t));
+  zk_ctx->w_state = (enum op_state *) malloc(size * sizeof(enum op_state));
+  zk_ctx->session_id = (uint32_t *) calloc(size, sizeof(uint32_t));
+  zk_ctx->acks_seen = (uint8_t *) calloc(size, sizeof(uint8_t));
+  zk_ctx->index_to_req_array = (uint32_t *) calloc(SESSIONS_PER_THREAD, sizeof(uint32_t));
 
-  p_writes->flr_id = (uint8_t *) malloc(size * sizeof(uint8_t));
-  p_writes->is_local = (bool *) malloc(size * sizeof(bool));
-  p_writes->stalled = (bool *) malloc(SESSIONS_PER_THREAD * sizeof(bool));
-  p_writes->ptrs_to_ops = (zk_prepare_t **) malloc(size * sizeof(zk_prepare_t *));
-  //if (protocol == FOLLOWER) init_fifo(&(p_writes->w_fifo), W_FIFO_SIZE * sizeof(zk_w_mes_t), 1);
-  memset(p_writes->g_id, 0, size * sizeof(uint64_t));
-  //p_writes->prep_fifo = (zk_prep_fifo_t *) calloc(1, sizeof(zk_prep_fifo_t));
-  //  p_writes->prep_fifo->prep_message =
+  zk_ctx->flr_id = (uint8_t *) malloc(size * sizeof(uint8_t));
+  zk_ctx->is_local = (bool *) malloc(size * sizeof(bool));
+  zk_ctx->stalled = (bool *) malloc(SESSIONS_PER_THREAD * sizeof(bool));
+  zk_ctx->ptrs_to_ops = (zk_prepare_t **) malloc(size * sizeof(zk_prepare_t *));
+  //if (protocol == FOLLOWER) init_fifo(&(zk_ctx->w_fifo), W_FIFO_SIZE * sizeof(zk_w_mes_t), 1);
+  memset(zk_ctx->g_id, 0, size * sizeof(uint64_t));
+  //zk_ctx->prep_fifo = (zk_prep_fifo_t *) calloc(1, sizeof(zk_prep_fifo_t));
+  //  zk_ctx->prep_fifo->prep_message =
   //  (zk_prep_mes_t *) calloc(PREP_FIFO_SIZE, sizeof(zk_prep_mes_t));
-  //assert(p_writes->prep_fifo != NULL);
-  for (i = 0; i < SESSIONS_PER_THREAD; i++) p_writes->stalled[i] = false;
+  //assert(zk_ctx->prep_fifo != NULL);
+  for (i = 0; i < SESSIONS_PER_THREAD; i++) zk_ctx->stalled[i] = false;
   for (i = 0; i < size; i++) {
-    p_writes->w_state[i] = INVALID;
+    zk_ctx->w_state[i] = INVALID;
   }
   if (protocol == LEADER) {
-    //zk_prep_mes_t *preps = p_writes->prep_fifo->prep_message;
+    //zk_prep_mes_t *preps = zk_ctx->prep_fifo->prep_message;
     //for (i = 0; i < PREP_FIFO_SIZE; i++) {
     //  preps[i].opcode = KVS_OP_PUT;
     //  for (uint16_t j = 0; j < MAX_PREP_COALESCE; j++) {
@@ -186,62 +190,12 @@ p_writes_t* set_up_pending_writes(context_t *ctx, uint32_t size,
     //  }
     //}
   } else { // PROTOCOL == FOLLOWER
-    //zk_w_mes_t *writes = (zk_w_mes_t *) p_writes->w_fifo->fifo;
-    //for (i = 0; i < W_FIFO_SIZE; i++) {
-    //  for (uint16_t j = 0; j < MAX_W_COALESCE; j++) {
-    //    writes[i].write[j].opcode = KVS_OP_PUT;
-    //    writes[i].write[j].val_len = VALUE_SIZE >> SHIFT_BITS;
-    //  }
-    //}
+      zk_ctx->r_meta = fifo_constructor(FLR_PENDING_READS, sizeof(r_meta_t), false, 0);
   }
-  return p_writes;
+  return zk_ctx;
 }
 
 
-
-// set the different queue depths for client's queue pairs
-void set_up_queue_depths_ldr_flr(int** recv_q_depths, int** send_q_depths, int protocol)
-{
-  /* -------LEADER-------------
-  * 1st Dgram send Prepares -- receive ACKs
-  * 2nd Dgram send Commits  -- receive Writes
-  * 3rd Dgram  receive Credits
-  * 4th Dgram send R_reps receive Reads
-  *
-    * ------FOLLOWER-----------
-  * 1st Dgram receive prepares -- send Acks
-  * 2nd Dgram receive Commits  -- send Writes
-  * 3rd Dgram  send Credits
-  * 4th Dgram send Reads receive R_Reps
-  * */
-  if (protocol == FOLLOWER) {
-    *send_q_depths = malloc(FOLLOWER_QP_NUM * sizeof(int));
-    *recv_q_depths = malloc(FOLLOWER_QP_NUM * sizeof(int));
-    (*recv_q_depths)[PREP_ACK_QP_ID] = ENABLE_MULTICAST == 1? 1 : FLR_RECV_PREP_Q_DEPTH;
-    (*recv_q_depths)[COMMIT_W_QP_ID] = ENABLE_MULTICAST == 1? 1 : FLR_RECV_COM_Q_DEPTH;
-    (*recv_q_depths)[FC_QP_ID] = FLR_RECV_CR_Q_DEPTH;
-    (*recv_q_depths)[R_QP_ID] = FLR_RECV_R_REP_Q_DEPTH;
-
-    (*send_q_depths)[PREP_ACK_QP_ID] = FLR_SEND_ACK_Q_DEPTH;
-    (*send_q_depths)[COMMIT_W_QP_ID] = FLR_SEND_W_Q_DEPTH;
-    (*send_q_depths)[FC_QP_ID] = FLR_SEND_CR_Q_DEPTH;
-    (*send_q_depths)[R_QP_ID] = FLR_SEND_R_Q_DEPTH;
-  }
-  else if (protocol == LEADER) {
-    *send_q_depths = malloc(LEADER_QP_NUM * sizeof(int));
-    *recv_q_depths = malloc(LEADER_QP_NUM * sizeof(int));
-    (*recv_q_depths)[PREP_ACK_QP_ID] = LDR_RECV_ACK_Q_DEPTH;
-    (*recv_q_depths)[COMMIT_W_QP_ID] = LDR_RECV_W_Q_DEPTH;
-    (*recv_q_depths)[FC_QP_ID] = LDR_RECV_CR_Q_DEPTH;
-    (*recv_q_depths)[R_QP_ID] = LDR_RECV_R_Q_DEPTH;
-
-    (*send_q_depths)[PREP_ACK_QP_ID] = LDR_SEND_PREP_Q_DEPTH;
-    (*send_q_depths)[COMMIT_W_QP_ID] = LDR_SEND_COM_Q_DEPTH;
-    (*send_q_depths)[FC_QP_ID] = LDR_SEND_CR_Q_DEPTH;
-    (*send_q_depths)[R_QP_ID] = LDR_SEND_R_REP_Q_DEPTH;
-  }
-  else check_protocol(protocol);
-}
 
 // Prepost Receives on the Leader Side
 // Post receives for the coherence traffic in the init phase
@@ -257,21 +211,7 @@ void pre_post_recvs(uint32_t* push_ptr, struct ibv_qp *recv_qp, uint32_t lkey, v
 }
 
 
-// set up some basic leader buffers
-zk_com_fifo_t *set_up_ldr_ops(zk_resp_t *resp,  uint16_t t_id)
-{
-  int i;
-  assert(resp != NULL);
-  zk_com_fifo_t *com_fifo = calloc(1, sizeof(zk_com_fifo_t));
-  com_fifo->commits = (zk_com_mes_t *)
-    calloc(COMMIT_FIFO_SIZE, sizeof(zk_com_mes_t));
-  for(i = 0; i <  ZK_TRACE_BATCH; i++) resp[i].type = EMPTY;
-  for(i = 0; i <  COMMIT_FIFO_SIZE; i++) {
-      com_fifo->commits[i].opcode = KVS_OP_PUT;
-  }
-  assert(com_fifo->push_ptr == 0 && com_fifo->pull_ptr == 0 && com_fifo->size == 0);
- return com_fifo;
-}
+
 
 // Set up the memory registrations required in the leader if there is no Inlining
 void set_up_ldr_mrs(struct ibv_mr **prep_mr, void *prep_buf,

@@ -27,9 +27,9 @@ for i in "${!allIPs[@]}"; do
 done
 
 
-echo AllIps: "${allIPs[@]}"
-echo RemoteIPs: "${remoteIPs[@]}"
-echo Machine-Id "$machine_id"
+#echo AllIps: "${allIPs[@]}"
+#echo RemoteIPs: "${remoteIPs[@]}"
+#echo Machine-Id "$machine_id"
 
 export MLX5_SINGLE_THREADED=1
 export MLX5_SCATTER_TO_CQE=1
@@ -52,7 +52,7 @@ function blue() {
 
 # free the  pages workers use
 
-blue "Removing SHM keys used by MICA"
+#blue "Removing SHM keys used by MICA"
 for i in `seq 0 28`; do
 	key=`expr 1185 + $i`
 	sudo ipcrm -M $key 2>/dev/null
@@ -61,16 +61,16 @@ for i in `seq 0 28`; do
 done
 
 
-blue "Removing hugepages"
+#blue "Removing hugepages"
 shm-rm.sh 1>/dev/null 2>/dev/null
 
 
-blue "Reset server QP registry"
+#blue "Reset server QP registry"
 #sudo killall memcached
-memcached -l 0.0.0.0 1>/dev/null 2>/dev/null &
+#memcached -l 0.0.0.0 1>/dev/null 2>/dev/null &
 sleep 1
 
-blue "Running client and worker threads"
+#blue "Running client and worker threads"
 #gdb zookeeper
 sudo LD_LIBRARY_PATH=/usr/local/lib/ -E \
 	./zookeeper \
