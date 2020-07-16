@@ -419,20 +419,6 @@ static inline void broadcast_prepares(context_t *ctx, p_writes_t *p_writes,
     send_fifo->net_capacity -= coalesce_num;
     MOD_INCR(send_fifo->pull_ptr, PREP_FIFO_SIZE);
 		if (br_i == MAX_BCAST_BATCH) {
-      for (int j = 0; j < br_i; ++j) {
-        for (int i = 0; i < MESSAGES_IN_BCAST; ++i) {
-          int ind = j * MESSAGES_IN_BCAST + i;
-          int max_ind = (br_i * MESSAGES_IN_BCAST ) -1;
-          //printf("checking send_wr %u \n", ind);
-          assert(qp_meta->send_wr[ind].sg_list = &qp_meta->send_sgl[j]);
-          assert(qp_meta->send_wr[ind].wr.ud.ah = rem_qp[i + 1][ctx->t_id][PREP_ACK_QP_ID].ah);
-          if (ind < max_ind) assert (qp_meta->send_wr[ind].next = &qp_meta->send_wr[ind+1]);
-          else assert(qp_meta->send_wr[ind].next == NULL);
-          //assert(qp_meta->send_wr[j * MESSAGES_IN_BCAST + i].sg_list->addr = );
-        }
-      }
-
-
       post_quorum_broadasts_and_recvs(qp_meta->recv_info, qp_meta->recv_wr_num - qp_meta->recv_info->posted_recvs,
                                       p_writes->q_info, br_i, qp_meta->sent_tx, qp_meta->send_wr,
                                       qp_meta->send_qp, qp_meta->enable_inlining);
@@ -440,18 +426,6 @@ static inline void broadcast_prepares(context_t *ctx, p_writes_t *p_writes,
 		}
 	}
   if (br_i > 0) {
-    for (int j = 0; j < br_i; ++j) {
-      for (int i = 0; i < MESSAGES_IN_BCAST; ++i) {
-        int ind = j * MESSAGES_IN_BCAST + i;
-        int max_ind = (br_i * MESSAGES_IN_BCAST ) -1;
-        //printf("checking send_wr %u \n", ind);
-        assert(qp_meta->send_wr[ind].sg_list = &qp_meta->send_sgl[j]);
-        assert(qp_meta->send_wr[ind].wr.ud.ah = rem_qp[i + 1][ctx->t_id][PREP_ACK_QP_ID].ah);
-        if (ind < max_ind) assert (qp_meta->send_wr[ind].next = &qp_meta->send_wr[ind+1]);
-
-        //assert(qp_meta->send_wr[j * MESSAGES_IN_BCAST + i].sg_list->addr = );
-      }
-    }
     post_quorum_broadasts_and_recvs(qp_meta->recv_info, qp_meta->recv_wr_num - qp_meta->recv_info->posted_recvs,
                                     p_writes->q_info, br_i, qp_meta->sent_tx, qp_meta->send_wr,
                                     qp_meta->send_qp, qp_meta->enable_inlining);
@@ -632,7 +606,7 @@ static inline void send_writes_to_the_ldr(context_t *ctx,  p_writes_t *p_writes,
       assert(qp_meta->send_wr[0].opcode == IBV_WR_SEND);
       assert(qp_meta->send_wr[0].num_sge == 1);
       if (!qp_meta->enable_inlining) {
-        assert(qp_meta->send_wr[0].sg_list->lkey == qp_meta->mr->lkey);
+        assert(qp_meta->send_wr[0].sg_list->lkey == qp_meta->send_mr->lkey);
         //assert(qp_meta->send_wr[0].send_flags == IBV_SEND_SIGNALED);
         assert(!qp_meta->enable_inlining);
       }

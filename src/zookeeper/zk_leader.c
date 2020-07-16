@@ -51,6 +51,7 @@ void *leader(void *arg)
   set_up_ctx(ctx);
 
 
+
   post_recvs_with_recv_info(qp_meta[R_QP_ID].recv_info,
                             qp_meta[R_QP_ID].recv_wr_num);
 
