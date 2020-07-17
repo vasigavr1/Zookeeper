@@ -13,7 +13,6 @@ void *leader(void *arg)
 
 	if (ENABLE_MULTICAST == 1 && t_id == 0)
 		my_printf(cyan, "MULTICAST IS ENABLED\n");
-	protocol_t protocol = LEADER;
 
 
   context_t *ctx = create_ctx((uint8_t) machine_id,
@@ -25,39 +24,35 @@ void *leader(void *arg)
 
   ///
   create_per_qp_meta(&qp_meta[PREP_ACK_QP_ID], LDR_MAX_PREP_WRS,
-                     LDR_MAX_RECV_ACK_WRS, SEND_BCAST_LDR_RECV_UNI,
+                     LDR_MAX_RECV_ACK_WRS, SEND_BCAST_LDR_RECV_UNI,  RECV_REPLY,
                      FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_ACK_BUF_SLOTS,
                      LDR_ACK_RECV_SIZE, LDR_PREP_SEND_SIZE, ENABLE_MULTICAST, false,
-                     PREP_MCAST_QP, LEADER_MACHINE, PREP_FIFO_SIZE, PREPARE_CREDITS, PREP_MES_HEADER);
+                     PREP_MCAST_QP, LEADER_MACHINE, PREP_FIFO_SIZE,
+                     PREPARE_CREDITS, PREP_MES_HEADER, ack_handler, NULL,
+                     "send preps", "recv acks");
   ///
   create_per_qp_meta(&qp_meta[COMMIT_W_QP_ID], LDR_MAX_COM_WRS,
-                     LDR_MAX_RECV_W_WRS, SEND_BCAST_LDR_RECV_UNI,
+                     LDR_MAX_RECV_W_WRS, SEND_BCAST_LDR_RECV_UNI, RECV_REQ,
                      FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_W_BUF_SLOTS,
                      LDR_W_RECV_SIZE, LDR_COM_SEND_SIZE, ENABLE_MULTICAST, false,
-                     COM_MCAST_QP, LEADER_MACHINE, COMMIT_FIFO_SIZE, COMMIT_CREDITS, 0);
+                     COM_MCAST_QP, LEADER_MACHINE, COMMIT_FIFO_SIZE,
+                     COMMIT_CREDITS, 0, write_handler, NULL,
+                     "send commits", "recv writes");
   ///
-  create_per_qp_meta(&qp_meta[FC_QP_ID], 0, LDR_MAX_CREDIT_RECV, RECV_CREDITS,
+  create_per_qp_meta(&qp_meta[FC_QP_ID], 0, LDR_MAX_CREDIT_RECV, RECV_CREDITS, RECV_REPLY,
                      0, FOLLOWER_MACHINE_NUM, 0,
                      0, 0, false, false,
-                     0, LEADER_MACHINE, 0, 0, 0);
+                     0, LEADER_MACHINE, 0, 0, 0, NULL, NULL,
+                     NULL, "recv credits");
   ///
-  create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_REP_WRS, MAX_RECV_R_WRS, SEND_UNI_REP_LDR_RECV_UNI_REQ,
-                     1, 1, LEADER_R_BUF_SLOTS,
+  create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_REP_WRS, MAX_RECV_R_WRS, SEND_UNI_REP_LDR_RECV_UNI_REQ, RECV_REQ,
+                     FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_R_BUF_SLOTS,
                      R_RECV_SIZE, R_REP_SEND_SIZE, false, false,
-                     0, LEADER_MACHINE, R_REP_FIFO_SIZE, 0, R_REP_MES_HEADER);
-
+                     0, LEADER_MACHINE, R_REP_FIFO_SIZE, 0, R_REP_MES_HEADER, r_handler, send_r_reps_helper,
+                     "send r_Reps", "recv reads");
 
 
   set_up_ctx(ctx);
-
-
-
-  post_recvs_with_recv_info(qp_meta[R_QP_ID].recv_info,
-                            qp_meta[R_QP_ID].recv_wr_num);
-
-  post_recvs_with_recv_info(qp_meta[COMMIT_W_QP_ID].recv_info,
-                            qp_meta[COMMIT_W_QP_ID].recv_wr_num);
-
 
 	/* -----------------------------------------------------
 	--------------CONNECT WITH FOLLOWERS-----------------------
@@ -95,12 +90,11 @@ void *leader(void *arg)
     }
   }
 
-
-
-
   zk_ctx_t *zk_ctx = set_up_pending_writes(ctx, LEADER_PENDING_WRITES,
-                                               protocol);
+                                               LEADER);
   zk_ctx->prep_fifo = qp_meta[PREP_ACK_QP_ID].send_fifo;
+
+
 
   // There are no explicit credits and therefore we need to represent the remote prepare buffer somehow,
   // such that we can interpret the incoming acks correctly
@@ -108,6 +102,7 @@ void *leader(void *arg)
   init_fifo(&remote_prep_buf, FLR_PREP_BUF_SLOTS * sizeof(uint16_t), FOLLOWER_MACHINE_NUM);
   uint16_t *fifo = (uint16_t *)remote_prep_buf[FOLLOWER_MACHINE_NUM -1].fifo;
   assert(fifo[FLR_PREP_BUF_SLOTS -1] == 0);
+  qp_meta[PREP_ACK_QP_ID].mirror_remote_recv_fifo = remote_prep_buf;
 
 
 	// TRACE
@@ -137,10 +132,7 @@ void *leader(void *arg)
 		/* ---------------------------------------------------------------------------
 		------------------------------ POLL FOR ACKS--------------------------------
 		---------------------------------------------------------------------------*/
-    if (WRITE_RATIO > 0)
-      ldr_poll_for_acks(ctx, zk_ctx,
-                        remote_prep_buf,
-                        &wait_for_acks_dbg_counter, &outstanding_prepares);
+    poll_incoming_messages(ctx, zk_ctx, PREP_ACK_QP_ID);
 
 /* ---------------------------------------------------------------------------
 		------------------------------ PROPAGATE UPDATES--------------------------
@@ -167,14 +159,15 @@ void *leader(void *arg)
     // the appropriate prepare messages
 		trace_iter = zk_batch_from_trace_to_KVS(ctx, trace_iter, t_id, trace, ops,
                                             (uint8_t) FOLLOWER_MACHINE_NUM, zk_ctx, resp,
-                                            &latency_info,  &last_session, protocol);
+                                            &latency_info,  &last_session);
 
     /* ---------------------------------------------------------------------------
 		------------------------------POLL FOR REMOTE WRITES--------------------------
 		---------------------------------------------------------------------------*/
     // get local and remote writes back to back to increase the write batch
-    if (WRITE_RATIO > 0)
-      poll_for_writes(ctx, zk_ctx);
+    poll_incoming_messages(ctx, zk_ctx, COMMIT_W_QP_ID);
+
+
 
     /* ---------------------------------------------------------------------------
 		------------------------------GET GLOBAL WRITE IDS--------------------------
@@ -197,6 +190,12 @@ void *leader(void *arg)
         assert (zk_ctx->w_state[ptr] == INVALID);
       }
     }
+
+    /* ---------------------------------------------------------------------------
+		------------------------------READ_REPLIES------------------------------------
+		---------------------------------------------------------------------------*/
+    poll_incoming_messages(ctx, zk_ctx, R_QP_ID);
+    send_unicasts(ctx, zk_ctx, R_QP_ID);
 
 
 	}

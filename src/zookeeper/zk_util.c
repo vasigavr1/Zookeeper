@@ -37,6 +37,11 @@ void zk_print_parameters_in_the_start()
 void zk_static_assert_compile_parameters()
 {
   static_assert(sizeof(zk_w_mes_t) == FLR_W_SEND_SIZE, " ");
+  static_assert(sizeof(zk_r_mes_t) == R_MES_SIZE, " ");
+  static_assert(sizeof(zk_read_t) == R_SIZE, " ");
+  static_assert(sizeof(zk_r_mes_t) == R_MES_HEADER + (R_SIZE * R_COALESCE), " ");
+
+  static_assert(sizeof(zk_r_rep_big_t) == R_REP_SIZE, " ");
 
   //if (ENABLE_MULTICAST) assert(MCAST_FLR_RECV_QP_NUM == MCAST_GROUPS_PER_FLOW);
   assert(LEADER_MACHINE < MACHINE_NUM);
@@ -158,6 +163,7 @@ zk_ctx_t* set_up_pending_writes(context_t *ctx, uint32_t size,
   int i;
   zk_ctx_t* zk_ctx = (zk_ctx_t*) calloc(1,sizeof(zk_ctx_t));
   zk_ctx->q_info = protocol == LEADER ? set_up_q_info(ctx) : NULL;
+  zk_ctx->protocol = protocol;
 
 
   zk_ctx->g_id = (uint64_t *) malloc(size * sizeof(uint64_t));
@@ -181,6 +187,12 @@ zk_ctx_t* set_up_pending_writes(context_t *ctx, uint32_t size,
     zk_ctx->w_state[i] = INVALID;
   }
   if (protocol == LEADER) {
+    zk_ctx->ptrs_to_r = calloc(1, sizeof(ptrs_to_r_t));
+    zk_ctx->ptrs_to_r->ptr_to_ops = malloc(LDR_MAX_INCOMING_R * sizeof(zk_read_t*));
+    zk_ctx->ptrs_to_r->ptr_to_r_mes = malloc(LDR_MAX_INCOMING_R * sizeof(zk_r_mes_t*));
+    zk_ctx->ptrs_to_r->coalesce_r_rep = malloc(LDR_MAX_INCOMING_R * sizeof(bool));
+
+
     //zk_prep_mes_t *preps = zk_ctx->prep_fifo->prep_message;
     //for (i = 0; i < PREP_FIFO_SIZE; i++) {
     //  preps[i].opcode = KVS_OP_PUT;

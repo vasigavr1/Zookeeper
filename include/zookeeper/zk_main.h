@@ -113,7 +113,7 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 //---READS---
 #define R_MES_HEADER (10) // local id + coalesce num + m_id
 #define EFFECTIVE_MAX_R_SIZE (MAX_READ_SIZE - R_MES_HEADER)
-#define R_SIZE (VALUE_SIZE + R_MES_HEADER) // TODO
+#define R_SIZE (17) // key +g_id + opcode
 #define R_COALESCE (EFFECTIVE_MAX_R_SIZE / R_SIZE)
 #define R_MES_SIZE (R_MES_HEADER + (R_SIZE * R_COALESCE))
 #define R_SEND_SIZE R_MES_SIZE
@@ -126,15 +126,16 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 
 #define MAX_RECV_R_WRS ((R_CREDITS * FOLLOWER_MACHINE_NUM) + RECV_WR_SAFETY_MARGIN)
 #define MAX_INCOMING_R (MAX_RECV_R_WRS * MAX_READ_COALESCE)
-#define MAX_R_WRS (MESSAGES_IN_BCAST_BATCH)
+#define MAX_R_WRS (R_CREDITS)
 #define R_ENABLE_INLINING ((R_SEND_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
 #define R_RECV_SIZE (GRH_SIZE + ALIGNED_R_SEND_SIDE)
 
 
 
 // READ REPLIES -- Replies to reads/acquires/proposes accepts
-#define R_REP_MES_HEADER (11) //l_id 8 , coalesce_num 1, m_id 1, opcode 1
-#define R_REP_SIZE (VALUE_SIZE + 8 + 1)
+#define R_REP_MES_HEADER (9) //l_id 8 , coalesce_num 1
+#define R_REP_SIZE (VALUE_SIZE + 8 + 1) // g_id + opcode
+#define R_REP_SMALL_SIZE 1
 #define R_REP_MES_SIZE (R_REP_MES_HEADER + (R_COALESCE * R_REP_SIZE))
 #define MAX_R_REP_MES_SIZE R_REP_MES_SIZE
 #define R_REP_SEND_SIZE MIN(MAX_R_REP_MES_SIZE, MTU)
@@ -160,6 +161,7 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 
 #define LEADER_PREPARE_ENABLE_INLINING ((LDR_PREP_SEND_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
 
+#define LDR_MAX_INCOMING_R (MAX_RECV_R_WRS * MAX_READ_COALESCE)
 
 
 //-- LEADER
@@ -387,6 +389,7 @@ typedef struct zk_w_message_ud_req {
 
 //
 typedef struct zk_read {
+	uint8_t opcode;
   struct key key;
   uint64_t g_id;
 } __attribute__((__packed__)) zk_read_t;
@@ -405,17 +408,21 @@ typedef struct zk_r_message_ud_req {
 } zk_r_mes_ud_t;
 
 
-typedef struct r_rep_big {
+typedef struct zk_r_rep_small {
+	uint8_t opcode;
+}__attribute__((__packed__)) zk_r_rep_small_t;
+
+
+typedef struct zk_r_rep_big {
   uint8_t opcode;
+	uint64_t g_id;
   uint8_t value[VALUE_SIZE];
 }__attribute__((__packed__)) zk_r_rep_big_t;
 
 typedef struct r_rep_message {
-  uint8_t coalesce_num;
-  uint8_t m_id;
-  uint8_t opcode;
   uint64_t l_id;
-  struct r_rep_big r_rep[MAX_R_REP_COALESCE];
+	uint8_t coalesce_num;
+	zk_r_rep_big_t r_rep[MAX_R_REP_COALESCE];
 } __attribute__((__packed__)) zk_r_rep_mes_t;
 
 
@@ -447,9 +454,24 @@ typedef struct read_meta {
   uint32_t val_len;
   uint32_t sess_id;
   uint64_t g_id;
+	uint64_t l_id;
 } r_meta_t ;
 
 
+// struct for the follower to keep track of the acks it has sent
+typedef struct pending_acks {
+  uint32_t slots_ahead;
+  uint32_t acks_to_send;
+} p_acks_t;
+
+typedef struct ptrs_to_reads {
+	uint16_t polled_reads;
+	zk_read_t **ptr_to_ops;
+	zk_r_mes_t **ptr_to_r_mes;
+	bool *coalesce_r_rep;
+
+
+} ptrs_to_r_t;
 
 
 // A data structute that keeps track of the outstanding writes
@@ -457,10 +479,11 @@ typedef struct zk_ctx {
 	uint64_t *g_id;
 	fifo_t *prep_fifo;
   fifo_t *w_fifo;
-  fifo_t *r_fifo;
+  //fifo_t *r_fifo;
   fifo_t *r_meta;
 
 	zk_prepare_t **ptrs_to_ops;
+	ptrs_to_r_t *ptrs_to_r;
 	uint64_t local_w_id;
   uint64_t local_r_id;
 	uint32_t *session_id;
@@ -470,7 +493,7 @@ typedef struct zk_ctx {
 	uint32_t w_pull_ptr;
   uint32_t w_size;
 
-
+  p_acks_t *p_acks;
 
 	uint32_t prep_pull_ptr; // Where to pull prepares from
 	uint32_t unordered_ptr;
@@ -484,16 +507,14 @@ typedef struct zk_ctx {
 	bool *stalled;
 	bool all_sessions_stalled;
   quorum_info_t *q_info;
+  protocol_t protocol;
+  uint32_t polled_messages;
 } zk_ctx_t;
 
 
 
 
-// struct for the follower to keep track of the acks it has sent
-typedef struct pending_acks {
-	uint32_t slots_ahead;
-	uint32_t acks_to_send;
-} p_acks_t;
+
 
 
 typedef struct zk_trace_op {

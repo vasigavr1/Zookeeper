@@ -318,25 +318,32 @@ static inline void forge_prep_wr(context_t *ctx,
 /* ---------------------------------------------------------------------------
 //------------------------------ UNICASTS --------------------------------
 //---------------------------------------------------------------------------*/
-// Form the Write work request for the read
+//
 static inline void forge_unicast_wr(context_t *ctx,
                                     uint16_t qp_id,
                                     const char *mes,
-                                    uint16_t w_i)
+                                    uint16_t mes_i)
 {
   per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
   struct ibv_sge *send_sgl = qp_meta->send_sgl;
   struct ibv_send_wr *send_wr = qp_meta->send_wr;
 
-  send_sgl[w_i].length = get_fifo_slot_meta_pull(qp_meta->send_fifo)->byte_size;
-  send_sgl[w_i].addr = (uintptr_t) get_fifo_pull_slot(qp_meta->send_fifo);
+  printf("%u/%u \n", mes_i, MAX_R_REP_WRS);
+  send_sgl[mes_i].length = get_fifo_slot_meta_pull(qp_meta->send_fifo)->byte_size;
+  send_sgl[mes_i].addr = (uintptr_t) get_fifo_pull_slot(qp_meta->send_fifo);
 
-  zk_checks_and_print_when_forging_unicast(ctx, qp_id);
+  if (qp_meta->receipient_num > 1) {
+    uint8_t rm_id = get_fifo_slot_meta_pull(qp_meta->send_fifo)->rm_id;
+    send_wr[mes_i].wr.ud.ah = rem_qp[rm_id][ctx->t_id][qp_id].ah;
+    send_wr[mes_i].wr.ud.remote_qpn = (uint32_t) rem_qp[rm_id][ctx->t_id][qp_id].qpn;
+  }
+
+
   selective_signaling_for_unicast(&qp_meta->sent_tx, qp_meta->ss_batch, send_wr,
-                                  w_i, qp_meta->send_cq, qp_meta->enable_inlining,
+                                  mes_i, qp_meta->send_cq, qp_meta->enable_inlining,
                                   mes, ctx->t_id);
   // Have the last message point to the current message
-  if (w_i > 0) send_wr[w_i - 1].next = &send_wr[w_i];
+  if (mes_i > 0) send_wr[mes_i - 1].next = &send_wr[mes_i];
 
 }
 
@@ -405,6 +412,22 @@ static inline void fill_write(zk_write_t *write, mica_key_t key, uint8_t opcode,
   write->sess_id = session_id;
 }
 
+
+static inline void fill_r_rep(zk_read_t *read,
+                              zk_r_rep_big_t *r_rep,
+                              mica_op_t *kv_ptr,
+                              uint16_t t_id)
+{
+  r_rep->opcode = G_ID_TOO_SMALL;
+  uint32_t debug_cntr = 0;
+  uint64_t tmp_lock = read_seqlock_lock_free(&kv_ptr->seqlock);
+  do {
+    debug_stalling_on_lock(&debug_cntr, "filling r_rep", t_id);
+    memcpy(r_rep->value, kv_ptr->value, (size_t) VALUE_SIZE);
+    r_rep->g_id = kv_ptr->g_id;
+  } while (!(check_seqlock_lock_free(&kv_ptr->seqlock, &tmp_lock)));
+}
+
 // Insert a new local or remote write to the leader pending writes
 static inline void ldr_insert_write(context_t *ctx, zk_ctx_t *zk_ctx,
                                     void *source, bool local)
@@ -464,7 +487,7 @@ static inline void flr_insert_write(zk_ctx_t *zk_ctx, zk_trace_op_t *op,
 {
   fifo_t *send_fifo = zk_ctx->w_fifo;
   zk_write_t *write = (zk_write_t *)
-    get_send_fifo_ptr(send_fifo, sizeof(zk_write_t), 1, t_id);
+    get_send_fifo_ptr(send_fifo, sizeof(zk_write_t), 1, false, t_id);
   fill_write(write, op->key, op->opcode, op->val_len, op->value,
              flr_id, op->session_id);
 
@@ -482,32 +505,74 @@ static inline void flr_insert_write(zk_ctx_t *zk_ctx, zk_trace_op_t *op,
 }
 
 
-static inline void flr_insert_read(zk_ctx_t *zk_ctx,
+static inline void flr_insert_read(context_t *ctx,
+                                   zk_ctx_t *zk_ctx,
                                    zk_trace_op_t *op,
                                    uint16_t t_id)
 {
-  fifo_t* send_fifo = zk_ctx->r_fifo;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[R_QP_ID];
+  fifo_t* send_fifo = qp_meta->send_fifo;
   r_meta_t *r_meta = (r_meta_t *) get_fifo_push_slot(zk_ctx->r_meta);
   zk_read_t *read = (zk_read_t *)
-    get_send_fifo_ptr(send_fifo, R_SIZE,
-                      R_REP_SIZE, t_id);
+    get_send_fifo_ptr(send_fifo, R_SIZE, R_REP_SIZE, false, t_id);
 
+  read->opcode = KVS_OP_GET;
   read->key = r_meta->key;
   read->g_id = r_meta->g_id;
 
 
+
+
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
   zk_r_mes_t *r_mes = (zk_r_mes_t *) get_fifo_push_slot(send_fifo);
+  if (ENABLE_ASSERTIONS) {
+    assert(read == &r_mes->read[slot_meta->coalesce_num - 1]);
+  }
+
   if (slot_meta->coalesce_num == 1) {
     fifo_incr_capacity(send_fifo);
+    printf("Inserting a new read message \n");
     r_mes->coalesce_num = 1;
-    r_mes->l_id = (uint64_t) (zk_ctx->local_r_id + zk_ctx->r_meta->capacity);
+    r_mes->l_id = r_meta->l_id;
     fifo_set_push_backward_ptr(send_fifo, zk_ctx->r_meta->push_ptr);
   }
   else r_mes->coalesce_num++;
 
   fifo_incr_push_ptr(zk_ctx->r_meta);
-  fifo_incr_net_capacity(zk_ctx->r_fifo);
+  fifo_incr_net_capacity(send_fifo);
+}
+
+static inline void ldr_insert_r_rep(context_t *ctx,
+                                    zk_ctx_t *zk_ctx,
+                                    mica_op_t *kv_ptr,
+                                    uint16_t op_i)
+{
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[R_QP_ID];
+  fifo_t *send_fifo = qp_meta->send_fifo;
+  ptrs_to_r_t *ptrs_to_r = zk_ctx->ptrs_to_r;
+  zk_read_t *read = ptrs_to_r->ptr_to_ops[op_i];
+
+
+  zk_r_rep_big_t *r_rep = get_send_fifo_ptr(send_fifo, R_REP_SMALL_SIZE, 0,
+                                            !ptrs_to_r->coalesce_r_rep[op_i], ctx->t_id);
+
+  fill_r_rep(read, r_rep, kv_ptr, ctx->t_id);
+
+  slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
+  if (r_rep->opcode == G_ID_TOO_SMALL)
+    slot_meta->byte_size += (R_REP_SIZE - R_REP_SMALL_SIZE);
+
+  zk_r_rep_mes_t *r_rep_mes = (zk_r_rep_mes_t *) get_fifo_push_slot(send_fifo);
+  if (slot_meta->coalesce_num == 1) {
+    fifo_incr_capacity(send_fifo);
+    r_rep_mes->coalesce_num = 1;
+    r_rep_mes->l_id = ptrs_to_r->ptr_to_r_mes[op_i]->l_id;
+    slot_meta->rm_id = ptrs_to_r->ptr_to_r_mes[op_i]->m_id;
+    printf("Creating r_rep \n");
+  }
+  else r_rep_mes->coalesce_num++;
+
+  fifo_incr_net_capacity(send_fifo);
 }
 
 

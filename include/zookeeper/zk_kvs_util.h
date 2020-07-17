@@ -10,6 +10,7 @@
 #include "generic_inline_util.h"
 #include "debug_util.h"
 #include "zk_generic_util.h"
+#include "zk_reservation_stations_util.h"
 
 
 static inline void KVS_local_read(mica_op_t *kv_ptr,
@@ -51,6 +52,7 @@ static inline void KVS_remote_read(zk_ctx_t *zk_ctx,
   assert(zk_ctx->stalled[r_meta->sess_id]);
   r_meta->state = VALID;
   r_meta->seen_larger_g_id = false;
+  r_meta->l_id = zk_ctx->local_r_id + zk_ctx->r_meta->capacity ;
   resp->type = KVS_GET_SUCCESS;
   MOD_INCR(r_push_ptr, FLR_PENDING_READS);
   (*r_push_ptr_) =  r_push_ptr;
@@ -84,7 +86,7 @@ static inline void zk_KVS_batch_op_trace(zk_ctx_t *zk_ctx, uint16_t op_num,
   }
   KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
 
-  uint32_t r_push_ptr = zk_ctx->r_meta->push_ptr;
+  uint32_t r_push_ptr = zk_ctx->protocol == FOLLOWER ? zk_ctx->r_meta->push_ptr : 0;
   // the following variables used to validate atomicity between a lock-free read of an object
   for(op_i = 0; op_i < op_num; op_i++) {
     if (ENABLE_ASSERTIONS && kv_ptr[op_i] == NULL) assert(false);
@@ -172,7 +174,57 @@ static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_prepare_t **preps
       op->opcode = 5;
     }
   }
+}
 
+
+///* The leader and follower send the writes to be committed with this function*/
+static inline void zk_KVS_batch_op_reads(context_t *ctx, zk_ctx_t *zk_ctx)
+{
+
+  uint16_t op_i;  /* op_i is batch index */
+  ptrs_to_r_t *ptrs_to_r = zk_ctx->ptrs_to_r;
+  uint16_t op_num =  ptrs_to_r->polled_reads;
+  if (op_num == 0) return;
+  if (ENABLE_ASSERTIONS) {
+    assert(op_num > 0 && op_num <= LDR_MAX_INCOMING_R);
+  }
+
+  unsigned int bkt[LDR_MAX_INCOMING_R];
+  struct mica_bkt *bkt_ptr[LDR_MAX_INCOMING_R];
+  unsigned int tag[LDR_MAX_INCOMING_R];
+  mica_op_t *kv_ptr[LDR_MAX_INCOMING_R];	/* Ptr to KV item in log */
+
+  for(op_i = 0; op_i < op_num; op_i++) {
+    zk_read_t *read = ptrs_to_r->ptr_to_ops[op_i];
+    KVS_locate_one_bucket(op_i, bkt, &read->key, bkt_ptr, tag, kv_ptr, KVS);
+  }
+  KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
+
+  for(op_i = 0; op_i < op_num; op_i++) {
+    zk_read_t *read = ptrs_to_r->ptr_to_ops[op_i];
+    if (ENABLE_ASSERTIONS && kv_ptr[op_i] == NULL) {
+      my_printf(red, "Kptr  is null %u\n", op_i);
+      cust_print_key("Op", &read->key);
+      assert(false);
+    }
+
+    bool key_found = memcmp(&kv_ptr[op_i]->key, &read->key, KEY_SIZE) == 0;
+    if (unlikely(ENABLE_ASSERTIONS && !key_found)) {
+      my_printf(red, "Kvs update miss %u\n", op_i);
+      cust_print_key("Op", &read->key);
+      cust_print_key("KV_ptr", &kv_ptr[op_i]->key);
+      assert(false);
+    }
+    if (read->opcode == KVS_OP_GET) {
+      ldr_insert_r_rep(ctx, zk_ctx, kv_ptr[op_i], op_i);
+    }
+    else {
+      my_printf(red, "wrong Opcode to a read in kvs: %d, req %d, flr_id %u,  g_id %lu , \n",
+                read->opcode, op_i, ptrs_to_r->ptr_to_r_mes[op_i]->m_id,  read->g_id);
+      assert(0);
+    }
+
+  }
 }
 
 #endif //Z_KVS_UTIL_H

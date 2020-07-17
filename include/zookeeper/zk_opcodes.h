@@ -5,6 +5,9 @@
 #ifndef ZK_OPCODES_H
 #define ZK_OPCODES_H
 
+#define G_ID_EQUAL 21
+#define G_ID_TOO_SMALL 22
+
 
 //Cache States
 #define VALID_STATE 1

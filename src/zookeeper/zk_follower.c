@@ -12,7 +12,7 @@ void *follower(void *arg)
   uint16_t t_id = (uint16_t) params.id;
   if (t_id == 0) my_printf(yellow, "FOLLOWER-id %d \n", flr_id);
 
-  protocol_t protocol = FOLLOWER;
+
   context_t *ctx = create_ctx((uint8_t) machine_id,
                               (uint16_t) params.id,
                               (uint16_t) FOLLOWER_QP_NUM,
@@ -23,34 +23,31 @@ void *follower(void *arg)
   per_qp_meta_t *qp_meta = ctx->qp_meta;
   ///
   create_per_qp_meta(&qp_meta[PREP_ACK_QP_ID], FLR_MAX_ACK_WRS,
-                     FLR_MAX_RECV_PREP_WRS, SEND_UNI_REP_RECV_LDR_BCAST, 1, 1, 3 * PREPARE_CREDITS,
+                     FLR_MAX_RECV_PREP_WRS, SEND_UNI_REP_RECV_LDR_BCAST, RECV_REQ,
+                     1, 1, 3 * PREPARE_CREDITS,
                      FLR_PREP_RECV_SIZE, FLR_ACK_SEND_SIZE, false, ENABLE_MULTICAST, PREP_MCAST_QP,
-                     LEADER_MACHINE, 0, 0, 0);
+                     LEADER_MACHINE, 0, 0, 0, prepare_handler, NULL,
+                     "send acks", "recv preps");
   ///
   create_per_qp_meta(&qp_meta[COMMIT_W_QP_ID], FLR_MAX_W_WRS,
-                     FLR_MAX_RECV_COM_WRS, SEND_UNI_REP_RECV_LDR_BCAST, 1, 1, COMMIT_CREDITS,
+                     FLR_MAX_RECV_COM_WRS, SEND_UNI_REP_RECV_LDR_BCAST, RECV_SEC_ROUND,
+                     1, 1, COMMIT_CREDITS,
                      FLR_COM_RECV_SIZE, FLR_W_SEND_SIZE, false, ENABLE_MULTICAST, COM_MCAST_QP,
-                     LEADER_MACHINE, W_FIFO_SIZE, W_CREDITS, W_MES_HEADER);
+                     LEADER_MACHINE, W_FIFO_SIZE, W_CREDITS, W_MES_HEADER, commit_handler, send_writes_helper,
+                     "send writes", "recv commits");
   ///
-  create_per_qp_meta(&qp_meta[FC_QP_ID], FLR_MAX_CREDIT_WRS, 0, SEND_CREDITS_LDR_RECV_NONE, 1,
-                     0, 0, 0, 0, false, false, 0, LEADER_MACHINE, 0, 0, 0);
+  create_per_qp_meta(&qp_meta[FC_QP_ID], FLR_MAX_CREDIT_WRS, 0, SEND_CREDITS_LDR_RECV_NONE, RECV_NOTHING,
+                     1,
+                     0, 0, 0, 0, false, false, 0, LEADER_MACHINE, 0, 0, 0, NULL, NULL,
+                     "send credits", "recv nothing");
   ///
-  create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_WRS, MAX_RECV_R_REP_WRS, SEND_UNI_REQ_RECV_LDR_REP, 1, 1,
-                     R_CREDITS, R_REP_RECV_SIZE, R_SEND_SIZE, false, false, 0, LEADER_MACHINE, R_FIFO_SIZE, R_CREDITS, R_MES_HEADER);
+  create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_WRS, MAX_RECV_R_REP_WRS, SEND_UNI_REQ_RECV_LDR_REP, RECV_REPLY,
+                     1, 1,
+                     R_CREDITS, R_REP_RECV_SIZE, R_SEND_SIZE, false, false, 0, LEADER_MACHINE, R_FIFO_SIZE,
+                     R_CREDITS, R_MES_HEADER, r_rep_handler, send_reads_helper,
+                     "send reads", "recv read_replies");
 
   set_up_ctx(ctx);
-
-
-
-  /* ---------------------------------------------------------------------------
-  ------------------------------PREPOST_RECVS-------------------------------
-  ---------------------------------------------------------------------------*/
-
-  post_recvs_with_recv_info(qp_meta[PREP_ACK_QP_ID].recv_info,
-                            qp_meta[PREP_ACK_QP_ID].recv_wr_num);
-
-  post_recvs_with_recv_info(qp_meta[COMMIT_W_QP_ID].recv_info,
-                            qp_meta[COMMIT_W_QP_ID].recv_wr_num);
 
   /* -----------------------------------------------------
   --------------CONNECT WITH LEADER-----------------------
@@ -74,8 +71,9 @@ void *follower(void *arg)
 
   zk_resp_t *resp = (zk_resp_t *) calloc(ZK_TRACE_BATCH, sizeof(zk_resp_t));
   zk_trace_op_t *ops = (zk_trace_op_t *) calloc(ZK_TRACE_BATCH, sizeof(zk_trace_op_t));
-  zk_ctx_t *zk_ctx = set_up_pending_writes(ctx, FLR_PENDING_WRITES, protocol);
+  zk_ctx_t *zk_ctx = set_up_pending_writes(ctx, FLR_PENDING_WRITES, FOLLOWER);
   p_acks_t *p_acks = (p_acks_t *) calloc(1, sizeof(p_acks_t));
+  zk_ctx->p_acks =p_acks;
   zk_ack_mes_t *ack = (zk_ack_mes_t *) calloc(1, sizeof(zk_ack_mes_t));
 
 
@@ -88,11 +86,21 @@ void *follower(void *arg)
     }
   }
 
+  zk_r_mes_t *r_mes = (zk_r_mes_t *) qp_meta[R_QP_ID].send_fifo->fifo;
+  for (uint16_t i = 0; i < R_FIFO_SIZE; i++) {
+    for (uint16_t j = 0; j < R_COALESCE; j++) {
+      r_mes[i].read[j].opcode = KVS_OP_GET;
+      r_mes[i].m_id = ctx->m_id;
+    }
+  }
+
   struct fifo *remote_w_buf;
   init_fifo(&remote_w_buf, LEADER_W_BUF_SLOTS * sizeof(uint16_t), 1);
   struct fifo *prep_buf_mirror;
   init_fifo(&prep_buf_mirror, FLR_PREP_BUF_SLOTS * sizeof(uint16_t), 1);
 
+  qp_meta[PREP_ACK_QP_ID].mirror_remote_recv_fifo = prep_buf_mirror;
+  qp_meta[COMMIT_W_QP_ID].mirror_remote_recv_fifo = remote_w_buf;
   /* ---------------------------------------------------------------------------
   ------------------------------INITIALIZE STATIC STRUCTURES--------------------
     ---------------------------------------------------------------------------*/
@@ -106,7 +114,6 @@ void *follower(void *arg)
   ------------------------------LATENCY AND DEBUG-----------------------------------
   ---------------------------------------------------------------------------*/
   uint32_t wait_for_gid_dbg_counter = 0, completed_but_not_polled_coms = 0,
-    completed_but_not_polled_preps = 0,
     wait_for_prepares_dbg_counter = 0, wait_for_coms_dbg_counter = 0;
   uint16_t last_session = 0;
   struct timespec start, end;
@@ -136,9 +143,10 @@ void *follower(void *arg)
   ------------------------------ POLL FOR PREPARES--------------------------
   ---------------------------------------------------------------------------*/
     if (WRITE_RATIO > 0)
-      flr_poll_for_prepares(ctx, zk_ctx, p_acks, prep_buf_mirror,
-                            &completed_but_not_polled_preps,
-                            &wait_for_prepares_dbg_counter);
+      poll_incoming_messages(ctx, zk_ctx, PREP_ACK_QP_ID);
+      //flr_poll_for_prepares(ctx, zk_ctx, p_acks, prep_buf_mirror,
+      //                      &completed_but_not_polled_preps,
+      //                      &wait_for_prepares_dbg_counter);
 
 
 
@@ -155,11 +163,13 @@ void *follower(void *arg)
     ------------------------------POLL FOR COMMITS---------------------------------
     ---------------------------------------------------------------------------*/
     if (WRITE_RATIO > 0)
-      poll_for_coms(ctx, zk_ctx,
-                    remote_w_buf, &completed_but_not_polled_coms,
-                    &wait_for_coms_dbg_counter);
+      poll_incoming_messages(ctx, zk_ctx, COMMIT_W_QP_ID);
 
+      //poll_for_coms(ctx, zk_ctx,
+      //              remote_w_buf, &completed_but_not_polled_coms,
+      //              &wait_for_coms_dbg_counter);
 
+    poll_incoming_messages(ctx, zk_ctx, R_QP_ID);
 
     /* ---------------------------------------------------------------------------
     ------------------------------PROPAGATE UPDATES---------------------------------
@@ -177,8 +187,7 @@ void *follower(void *arg)
 
   // Propagate the updates before probing the cache
     trace_iter = zk_batch_from_trace_to_KVS(ctx, trace_iter, t_id, trace, ops, flr_id,
-                                            zk_ctx, resp, &latency_info, &last_session,
-                                            protocol);
+                                            zk_ctx, resp, &latency_info, &last_session);
 
 
 
@@ -188,7 +197,16 @@ void *follower(void *arg)
   ------------------------------SEND WRITES TO THE LEADER---------------------------
   ---------------------------------------------------------------------------*/
   if (WRITE_RATIO > 0)
-    send_writes_to_the_ldr(ctx, zk_ctx, COMMIT_W_QP_ID, remote_w_buf);
+    send_unicasts(ctx, zk_ctx, COMMIT_W_QP_ID);
+
+    /* ---------------------------------------------------------------------------
+  ------------------------------SEND READS TO THE LEADER---------------------------
+  ---------------------------------------------------------------------------*/
+
+    send_unicasts(ctx, zk_ctx, R_QP_ID);
+
   }
+
+
   return NULL;
 }

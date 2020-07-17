@@ -5,6 +5,7 @@
 #ifndef KITE_ZK_DEBUG_UTIL_H
 #define KITE_ZK_DEBUG_UTIL_H
 
+#include <network_context.h>
 #include "zk_main.h"
 /* ---------------------------------------------------------------------------
 //------------------------------ ZOOKEEPER DEBUGGING -----------------------------
@@ -208,19 +209,26 @@ static inline void zk_check_ack_l_id_is_small_enough(uint16_t ack_num,
   }
 }
 
-static inline void zk_debug_info_bookkeep(int completed_messages, int polled_messages,
-                                          uint32_t *dbg_counter, recv_info_t *ack_recv_info,
-                                          uint32_t *outstanding_prepares, uint16_t t_id)
+static inline void zk_debug_info_bookkeep(context_t *ctx, uint16_t qp_id,
+                                          int completed_messages, uint32_t polled_messages)
 {
-  if (ENABLE_ASSERTIONS) assert(polled_messages == completed_messages);
-  if (polled_messages > 0) {
-    if (ENABLE_ASSERTIONS) (*dbg_counter) = 0;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
+  if (qp_id == PREP_ACK_QP_ID && ENABLE_ASSERTIONS) assert(polled_messages == completed_messages);
+  if (qp_meta->recv_type == RECV_REPLY) {
+    if (polled_messages > 0) {
+      if (ENABLE_ASSERTIONS) qp_meta->dbg_counter = 0;
+    }
+    else {
+      if (qp_meta->outstanding_messages > 0) {
+        if (ENABLE_ASSERTIONS) qp_meta->dbg_counter++;
+        if (ENABLE_STAT_COUNTING && qp_id == PREP_ACK_QP_ID) t_stats[ctx->t_id].stalled_ack_prep++;
+      }
+    }
   }
-  else {
-    if (ENABLE_ASSERTIONS && (*outstanding_prepares) > 0) (*dbg_counter)++;
-    if (ENABLE_STAT_COUNTING && (*outstanding_prepares) > 0) t_stats[t_id].stalled_ack_prep++;
+  if (ENABLE_ASSERTIONS) {
+    assert(qp_meta->recv_info->posted_recvs >= polled_messages);
+    //assert(qp_meta->recv_info->posted_recvs <= qp_meta->recv_wr_num);
   }
-  if (ENABLE_ASSERTIONS) assert(ack_recv_info->posted_recvs >= polled_messages);
 }
 
 /* ---------------------------------------------------------------------------
@@ -464,8 +472,9 @@ static inline void zk_checks_and_print_when_forging_unicast(context_t *ctx, uint
     assert(coalesce_num == r_mes->coalesce_num);
     for (uint16_t i = 0; i < coalesce_num; i++) {
       if (DEBUG_READS)
-        printf("READ %d, g_id id %lu, for_key %u, message capacity %d\n",
+        printf("READ %d/%u, g_id id %lu, for_key %u, message capacity %d\n",
                i,
+               coalesce_num,
                r_mes->read[i].g_id,
                r_mes->read[i].key.bkt,
                length);
@@ -476,7 +485,7 @@ static inline void zk_checks_and_print_when_forging_unicast(context_t *ctx, uint
     }
     assert(r_mes->m_id == ctx->m_id);
     if (DEBUG_READS)
-      my_printf(green, "Follower %d : I sent a read message %d with lid %lu of %u read with capacity %u,  with  credits: %d \n",
+      my_printf(green, "Follower %d : I sent a read message, coalesce num %u,  lid %lu , byte-size %u,   credits: %d \n",
                 ctx->t_id, coalesce_num, r_mes->l_id,  length, *qp_meta->credits);
   }
 }
@@ -505,7 +514,7 @@ static inline void checks_and_stats_when_sending_unicasts(context_t *ctx,
   }
   else {
     if (DEBUG_READS)
-      printf("FLR %d has %u reads to send credits %d\n", ctx->t_id,
+      printf("FLR %d has %u reads to send, credits %d\n", ctx->t_id,
              qp_meta->send_fifo->net_capacity, *qp_meta->credits);
 
     if (ENABLE_STAT_COUNTING) {
@@ -524,7 +533,8 @@ static inline void check_unicast_before_send(context_t *ctx,
     per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
     assert(qp_meta->send_qp == ctx->cb->dgram_qp[qp_id]);
     assert(qp_meta->send_wr[0].sg_list == &qp_meta->send_sgl[0]);
-    assert(qp_meta->send_wr[0].wr.ud.ah == rem_qp[rm_id][ctx->t_id][qp_id].ah);
+    if (qp_meta->receipient_num == 0)
+      assert(qp_meta->send_wr[0].wr.ud.ah == rem_qp[rm_id][ctx->t_id][qp_id].ah);
     assert(qp_meta->send_wr[0].opcode == IBV_WR_SEND);
     assert(qp_meta->send_wr[0].num_sge == 1);
     if (!qp_meta->enable_inlining) {

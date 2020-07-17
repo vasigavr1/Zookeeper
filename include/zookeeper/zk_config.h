@@ -22,7 +22,7 @@
 #define MAKE_FOLLOWERS_PASSIVE 0
 #define DISABLE_GID_ORDERING 1
 #define DISABLE_UPDATING_KVS 0
-#define USE_REMOTE_READS 0 // TODO make this protocol dependant
+#define USE_REMOTE_READS 1 // TODO make this protocol dependant
 
 #define FOLLOWERS_PER_MACHINE (WORKERS_PER_MACHINE)
 #define LEADERS_PER_MACHINE (WORKERS_PER_MACHINE)
