@@ -134,9 +134,9 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 
 // READ REPLIES -- Replies to reads/acquires/proposes accepts
 #define R_REP_MES_HEADER (9) //l_id 8 , coalesce_num 1
-#define R_REP_SIZE (VALUE_SIZE + 8 + 1) // g_id + opcode
+#define R_REP_BIG_SIZE (VALUE_SIZE + 8 + 1) // g_id + opcode
 #define R_REP_SMALL_SIZE 1
-#define R_REP_MES_SIZE (R_REP_MES_HEADER + (R_COALESCE * R_REP_SIZE))
+#define R_REP_MES_SIZE (R_REP_MES_HEADER + (R_COALESCE * R_REP_BIG_SIZE))
 #define MAX_R_REP_MES_SIZE R_REP_MES_SIZE
 #define R_REP_SEND_SIZE MIN(MAX_R_REP_MES_SIZE, MTU)
 

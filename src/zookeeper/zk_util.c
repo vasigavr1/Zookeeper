@@ -41,7 +41,7 @@ void zk_static_assert_compile_parameters()
   static_assert(sizeof(zk_read_t) == R_SIZE, " ");
   static_assert(sizeof(zk_r_mes_t) == R_MES_HEADER + (R_SIZE * R_COALESCE), " ");
 
-  static_assert(sizeof(zk_r_rep_big_t) == R_REP_SIZE, " ");
+  static_assert(sizeof(zk_r_rep_big_t) == R_REP_BIG_SIZE, " ");
 
   //if (ENABLE_MULTICAST) assert(MCAST_FLR_RECV_QP_NUM == MCAST_GROUPS_PER_FLOW);
   assert(LEADER_MACHINE < MACHINE_NUM);

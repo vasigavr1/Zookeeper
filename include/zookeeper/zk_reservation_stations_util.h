@@ -17,6 +17,10 @@ static inline uint32_t get_size_from_opcode(uint8_t opcode)
   switch (opcode) {
     case KVS_OP_GET:
       return (uint32_t) R_SIZE;
+    case G_ID_TOO_SMALL:
+      return (uint32_t) R_REP_BIG_SIZE;
+    case G_ID_EQUAL:
+      return (uint32_t) R_REP_SMALL_SIZE;
     default: if (ENABLE_ASSERTIONS) assert(false);
   }
 }
@@ -25,7 +29,7 @@ static inline uint32_t get_resp_size_from_opcode(uint8_t opcode)
 {
   switch (opcode) {
     case KVS_OP_GET:
-      return (uint32_t) R_REP_SIZE;
+      return (uint32_t) R_REP_BIG_SIZE;
     default: if (ENABLE_ASSERTIONS) assert(false);
   }
 }
@@ -514,7 +518,7 @@ static inline void flr_insert_read(context_t *ctx,
   fifo_t* send_fifo = qp_meta->send_fifo;
   r_meta_t *r_meta = (r_meta_t *) get_fifo_push_slot(zk_ctx->r_meta);
   zk_read_t *read = (zk_read_t *)
-    get_send_fifo_ptr(send_fifo, R_SIZE, R_REP_SIZE, false, t_id);
+    get_send_fifo_ptr(send_fifo, R_SIZE, R_REP_BIG_SIZE, false, t_id);
 
   read->opcode = KVS_OP_GET;
   read->key = r_meta->key;
@@ -560,7 +564,7 @@ static inline void ldr_insert_r_rep(context_t *ctx,
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
   if (r_rep->opcode == G_ID_TOO_SMALL)
-    slot_meta->byte_size += (R_REP_SIZE - R_REP_SMALL_SIZE);
+    slot_meta->byte_size += (R_REP_BIG_SIZE - R_REP_SMALL_SIZE);
 
   zk_r_rep_mes_t *r_rep_mes = (zk_r_rep_mes_t *) get_fifo_push_slot(send_fifo);
   if (slot_meta->coalesce_num == 1) {

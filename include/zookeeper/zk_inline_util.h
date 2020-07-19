@@ -544,8 +544,32 @@ static inline bool r_rep_handler(context_t *ctx,
   zk_r_rep_mes_t *r_rep_mes = (zk_r_rep_mes_t *) &incoming_r_reps[recv_fifo->pull_ptr].r_rep_mes;
 
   if (DEBUG_READ_REPS)
-    my_printf(cyan, "RECEIVING R_REP: l_id %u/%lu, coalesce_num %u \n",
-              r_rep_mes->l_id, zk_ctx->local_r_id, r_rep_mes->coalesce_num);
+    my_printf(cyan, "WRKR %u: RECEIVING R_REP: l_id %u/%lu, coalesce_num %u \n",
+              ctx->t_id, r_rep_mes->l_id, zk_ctx->local_r_id, r_rep_mes->coalesce_num);
+  fifo_t *r_meta_fifo = zk_ctx->r_meta;
+  assert(r_meta_fifo->capacity > 0);
+  uint64_t l_id = r_rep_mes->l_id;
+
+  uint16_t byte_ptr = R_REP_MES_HEADER;
+  for (int r_rep_i = 0; r_rep_i < r_rep_mes->coalesce_num; ++r_rep_i) {
+    r_meta_t *r_meta = (r_meta_t *) get_fifo_slot_meta_pull(r_meta_fifo);
+    assert(r_meta->state = VALID);
+    assert(r_meta->l_id == r_rep_mes->l_id + r_rep_i);
+    zk_r_rep_big_t *r_rep = (zk_r_rep_big_t *) (((void *) r_rep_mes) + byte_ptr);
+
+    if (DEBUG_READ_REPS)
+      my_printf(yellow, "Wrkr: R_rep %u/%u opcode %u \n",
+                ctx->t_id, r_rep_i, r_rep_mes->coalesce_num, r_rep->opcode);
+    byte_ptr += get_size_from_opcode(r_rep->opcode);
+    uint8_t *value_to_read =  r_rep->opcode == G_ID_EQUAL ? r_meta->value : r_rep->value;
+    zk_ctx->local_r_id++;
+
+    r_meta->state = INVALID;
+    fifo_incr_pull_ptr(r_meta_fifo);
+  }
+
+
+
 
 
   return true;
