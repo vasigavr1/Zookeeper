@@ -76,32 +76,30 @@ static inline void zk_print_error_message(const char *mes, protocol_t protocol,
 }
 
 // Leader checks its debug counters
-static inline void ldr_check_debug_cntrs(uint32_t *credit_debug_cnt, uint32_t *wait_for_acks_dbg_counter,
-                                         uint32_t *wait_for_gid_dbg_counter, zk_ctx_t *zk_ctx,
-                                         uint16_t t_id)
+static inline void ldr_check_debug_cntrs(context_t *ctx)
 {
-  if (unlikely((*wait_for_gid_dbg_counter) > M_16)) {
-    zk_print_error_message("waits for the g_id", LEADER, zk_ctx, t_id);
-    print_ldr_stats(t_id);
-    (*wait_for_gid_dbg_counter) = 0;
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+  uint32_t patience =  M_16;
+  if (unlikely((zk_ctx->wait_for_gid_dbg_counter) > patience)) {
+    zk_print_error_message("waits for the g_id", LEADER, zk_ctx, ctx->t_id);
+    print_ldr_stats(ctx->t_id);
+    zk_ctx->wait_for_gid_dbg_counter = 0;
   }
-  if (unlikely((*wait_for_acks_dbg_counter) > M_16)) {
-    zk_print_error_message("waits for acks", LEADER, zk_ctx, t_id);
+  if (unlikely((ctx->qp_meta[PREP_ACK_QP_ID].wait_for_reps_ctr) > patience)) {
+    zk_print_error_message("waits for acks", LEADER, zk_ctx, ctx->t_id);
     my_printf(cyan, "Sent lid %u and state %s \n",
               zk_ctx->local_w_id, w_state_to_str(zk_ctx->w_state[zk_ctx->w_pull_ptr]));
-    print_ldr_stats(t_id);
-    (*wait_for_acks_dbg_counter) = 0;
+    print_ldr_stats(ctx->t_id);
+    ctx->qp_meta[PREP_ACK_QP_ID].wait_for_reps_ctr = 0;
     //exit(0);
   }
-  if (unlikely(credit_debug_cnt[PREP_VC] > M_16)) {
-    zk_print_error_message("lacks prep credit", LEADER, zk_ctx, t_id);
-    print_ldr_stats(t_id);
-    credit_debug_cnt[PREP_VC] = 0;
+  if (unlikely(ctx->qp_meta[PREP_ACK_QP_ID].time_out_cnt % patience == 0)) {
+    zk_print_error_message("lacks prep credit", LEADER, zk_ctx, ctx->t_id);
+    print_ldr_stats(ctx->t_id);
   }
-  if (unlikely(credit_debug_cnt[COMM_VC] > M_16)) {
-    zk_print_error_message("lacks comm credits", LEADER, zk_ctx, t_id);
-    print_ldr_stats(t_id);
-    credit_debug_cnt[COMM_VC] = 0;
+  if (ctx->qp_meta[COMMIT_W_QP_ID].time_out_cnt % patience == 0) {
+    zk_print_error_message("lacks comm credits", LEADER, zk_ctx, ctx->t_id);
+    print_ldr_stats(ctx->t_id);
   }
 }
 
@@ -173,6 +171,8 @@ static inline void check_ldr_p_states(zk_ctx_t *zk_ctx, uint16_t t_id)
 
 
 
+
+
 /* ---------------------------------------------------------------------------
 //------------------------------ POLLNG ACKS -----------------------------
 //---------------------------------------------------------------------------*/
@@ -216,11 +216,11 @@ static inline void zk_debug_info_bookkeep(context_t *ctx, uint16_t qp_id,
   if (qp_id == PREP_ACK_QP_ID && ENABLE_ASSERTIONS) assert(polled_messages == completed_messages);
   if (qp_meta->recv_type == RECV_REPLY) {
     if (polled_messages > 0) {
-      if (ENABLE_ASSERTIONS) qp_meta->dbg_counter = 0;
+      if (ENABLE_ASSERTIONS) qp_meta->wait_for_reps_ctr = 0;
     }
     else {
       if (qp_meta->outstanding_messages > 0) {
-        if (ENABLE_ASSERTIONS) qp_meta->dbg_counter++;
+        if (ENABLE_ASSERTIONS) qp_meta->wait_for_reps_ctr++;
         if (ENABLE_STAT_COUNTING && qp_id == PREP_ACK_QP_ID) t_stats[ctx->t_id].stalled_ack_prep++;
       }
     }
@@ -400,6 +400,9 @@ static inline void zk_checks_and_stats_on_bcasting_commits(fifo_t *com_fifo,
     t_stats[t_id].coms_sent_mes_num++;
   }
 }
+
+
+
 
 
 /* ---------------------------------------------------------------------------

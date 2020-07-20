@@ -157,12 +157,13 @@ quorum_info_t* set_up_q_info(context_t *ctx)
 
 
 // Set up a struct that stores pending writes
-zk_ctx_t* set_up_pending_writes(context_t *ctx, uint32_t size,
-                                  protocol_t protocol)
+zk_ctx_t *set_up_pending_writes(context_t *ctx, protocol_t protocol)
 {
+
   int i;
   zk_ctx_t* zk_ctx = (zk_ctx_t*) calloc(1,sizeof(zk_ctx_t));
   zk_ctx->q_info = protocol == LEADER ? set_up_q_info(ctx) : NULL;
+  uint32_t size = protocol == LEADER ? LEADER_PENDING_WRITES : FLR_PENDING_WRITES;
   zk_ctx->protocol = protocol;
 
 
@@ -182,6 +183,10 @@ zk_ctx_t* set_up_pending_writes(context_t *ctx, uint32_t size,
   //  zk_ctx->prep_fifo->prep_message =
   //  (zk_prep_mes_t *) calloc(PREP_FIFO_SIZE, sizeof(zk_prep_mes_t));
   //assert(zk_ctx->prep_fifo != NULL);
+  zk_ctx->ops = (zk_trace_op_t *) calloc((size_t) ZK_TRACE_BATCH, sizeof(zk_trace_op_t));
+  zk_ctx->resp = (zk_resp_t*) calloc((size_t) ZK_TRACE_BATCH, sizeof(zk_resp_t));
+  for(int i = 0; i <  ZK_TRACE_BATCH; i++) zk_ctx->resp[i].type = EMPTY;
+
   for (i = 0; i < SESSIONS_PER_THREAD; i++) zk_ctx->stalled[i] = false;
   for (i = 0; i < size; i++) {
     zk_ctx->w_state[i] = INVALID;
@@ -191,21 +196,57 @@ zk_ctx_t* set_up_pending_writes(context_t *ctx, uint32_t size,
     zk_ctx->ptrs_to_r->ptr_to_ops = malloc(LDR_MAX_INCOMING_R * sizeof(zk_read_t*));
     zk_ctx->ptrs_to_r->ptr_to_r_mes = malloc(LDR_MAX_INCOMING_R * sizeof(zk_r_mes_t*));
     zk_ctx->ptrs_to_r->coalesce_r_rep = malloc(LDR_MAX_INCOMING_R * sizeof(bool));
-
-
-    //zk_prep_mes_t *preps = zk_ctx->prep_fifo->prep_message;
-    //for (i = 0; i < PREP_FIFO_SIZE; i++) {
-    //  preps[i].opcode = KVS_OP_PUT;
-    //  for (uint16_t j = 0; j < MAX_PREP_COALESCE; j++) {
-    //    preps[i].prepare[j].opcode = KVS_OP_PUT;
-    //    preps[i].prepare[j].val_len = VALUE_SIZE >> SHIFT_BITS;
-    //  }
-    //}
-  } else { // PROTOCOL == FOLLOWER
-      zk_ctx->r_meta = fifo_constructor(FLR_PENDING_READS, sizeof(r_meta_t), false, 0);
+  }
+  else { // PROTOCOL == FOLLOWER
+    zk_ctx->ack = (zk_ack_mes_t *) calloc(1, sizeof(zk_ack_mes_t));
+    zk_ctx->p_acks = (p_acks_t *) calloc(1, sizeof(p_acks_t));
+    zk_ctx->r_meta = fifo_constructor(FLR_PENDING_READS, sizeof(r_meta_t), false, 0);
   }
   return zk_ctx;
 }
+
+
+void zk_init_send_fifos(context_t *ctx)
+{
+
+  zk_ctx_t * zk_ctx = (zk_ctx_t *)ctx->appl_ctx;
+  if (zk_ctx->protocol == LEADER) {
+    zk_com_mes_t *commits = (zk_com_mes_t *) ctx->qp_meta[COMMIT_W_QP_ID].send_fifo->fifo;
+
+    for (int i = 0; i < COMMIT_FIFO_SIZE; i++) {
+      commits[i].opcode = KVS_OP_PUT;
+    }
+
+    zk_prep_mes_t *preps = (zk_prep_mes_t *) ctx->qp_meta[PREP_ACK_QP_ID].send_fifo->fifo;
+    for (int i = 0; i < PREP_FIFO_SIZE; i++) {
+      preps[i].opcode = KVS_OP_PUT;
+      for (uint16_t j = 0; j < MAX_PREP_COALESCE; j++) {
+        preps[i].prepare[j].opcode = KVS_OP_PUT;
+        preps[i].prepare[j].val_len = VALUE_SIZE >> SHIFT_BITS;
+      }
+    }
+  }
+  else {
+    zk_ctx->w_fifo = ctx->qp_meta[COMMIT_W_QP_ID].send_fifo;
+    zk_w_mes_t *writes = (zk_w_mes_t *) zk_ctx->w_fifo->fifo;
+    for (uint16_t i = 0; i < W_FIFO_SIZE; i++) {
+      for (uint16_t j = 0; j < MAX_W_COALESCE; j++) {
+        writes[i].write[j].opcode = KVS_OP_PUT;
+        writes[i].write[j].val_len = VALUE_SIZE >> SHIFT_BITS;
+      }
+    }
+
+    zk_r_mes_t *r_mes = (zk_r_mes_t *) ctx->qp_meta[R_QP_ID].send_fifo->fifo;
+    for (uint16_t i = 0; i < R_FIFO_SIZE; i++) {
+      for (uint16_t j = 0; j < R_COALESCE; j++) {
+        r_mes[i].read[j].opcode = KVS_OP_GET;
+        r_mes[i].m_id = ctx->m_id;
+      }
+    }
+  }
+}
+
+
 
 
 
@@ -225,104 +266,6 @@ void pre_post_recvs(uint32_t* push_ptr, struct ibv_qp *recv_qp, uint32_t lkey, v
 
 
 
-// Set up the memory registrations required in the leader if there is no Inlining
-void set_up_ldr_mrs(struct ibv_mr **prep_mr, void *prep_buf,
-                    struct ibv_mr **com_mr, void *com_buf,
-                    hrd_ctrl_blk_t *cb)
-{
-  if (!LEADER_PREPARE_ENABLE_INLINING) {
-   *prep_mr = register_buffer(cb->pd, (void*)prep_buf, PREP_FIFO_SIZE * sizeof(zk_prep_mes_t));
-  }
-  if (!COM_ENABLE_INLINING) *com_mr = register_buffer(cb->pd, com_buf,
-                                                      COMMIT_CREDITS * sizeof(zk_com_mes_t));
-}
-
-// Set up all leader WRs
-void set_up_ldr_WRs(struct ibv_send_wr *prep_send_wr, struct ibv_sge *prep_send_sgl,
-                    struct ibv_send_wr *com_send_wr, struct ibv_sge *com_send_sgl,
-                    uint16_t t_id, uint16_t remote_thread,
-                    struct ibv_mr *prep_mr, struct ibv_mr *com_mr,
-                    mcast_cb_t *mcast_cb) {
-  uint16_t i, j;
-  //BROADCAST WRs and credit Receives
-  for (j = 0; j < MAX_BCAST_BATCH; j++) { // Number of Broadcasts
-    if (!LEADER_PREPARE_ENABLE_INLINING) prep_send_sgl[j].lkey = prep_mr->lkey;
-    if (!COM_ENABLE_INLINING) com_send_sgl[j].lkey = com_mr->lkey;
-
-    for (i = 0; i < MESSAGES_IN_BCAST; i++) {
-      uint16_t rm_id = (uint16_t) (i < LEADER_MACHINE ? i : i + 1);
-      assert(rm_id != LEADER_MACHINE);
-      assert(rm_id < MACHINE_NUM);
-      uint16_t index = (uint16_t) ((j * MESSAGES_IN_BCAST) + i);
-      assert (index < MESSAGES_IN_BCAST_BATCH);
-      assert(index < LDR_MAX_PREP_WRS);
-      assert(index < LDR_MAX_COM_WRS);
-      bool last = (i == MESSAGES_IN_BCAST - 1);
-      set_up_wr(&prep_send_wr[index], &prep_send_sgl[j], LEADER_PREPARE_ENABLE_INLINING,
-                last, rm_id, remote_thread, PREP_ACK_QP_ID,
-                ENABLE_MULTICAST, mcast_cb, PREP_MCAST_QP);
-      set_up_wr(&com_send_wr[index], &com_send_sgl[j], COM_ENABLE_INLINING,
-                last, rm_id, remote_thread, COMMIT_W_QP_ID,
-                ENABLE_MULTICAST, mcast_cb, COM_MCAST_QP);
-    }
-  }
-}
-
-
-/* ---------------------------------------------------------------------------
-------------------------------FOLLOWER --------------------------------------
----------------------------------------------------------------------------*/
-
-// Set up all Follower WRs
-void set_up_follower_WRs(struct ibv_send_wr *ack_send_wr, struct ibv_sge *ack_send_sgl,
-                         struct ibv_recv_wr *prep_recv_wr, struct ibv_sge *prep_recv_sgl,
-                         struct ibv_send_wr *w_send_wr, struct ibv_sge *w_send_sgl,
-                         struct ibv_recv_wr *com_recv_wr, struct ibv_sge *com_recv_sgl,
-                         uint16_t remote_thread,
-                         hrd_ctrl_blk_t *cb, struct ibv_mr *w_mr,
-                         mcast_cb_t *mcast)
-{
-  uint16_t i;
-  // ACKS
-  set_up_wr(ack_send_wr, ack_send_sgl, true,
-            true, LEADER_MACHINE, remote_thread, PREP_ACK_QP_ID,
-            false, NULL, 0);
-  ack_send_sgl->length = FLR_ACK_SEND_SIZE;
-
-  // WRITES
-  for (i = 0; i < FLR_MAX_W_WRS; ++i) {
-    set_up_wr(&w_send_wr[i], &w_send_sgl[i], FLR_W_ENABLE_INLINING,
-              true, LEADER_MACHINE, remote_thread, COMMIT_W_QP_ID,
-              false, NULL, 0);
-    if (!FLR_W_ENABLE_INLINING)
-      w_send_sgl[i].lkey = w_mr->lkey;
-  }
-}
-
-
-void flr_set_up_credit_WRs(struct ibv_send_wr* credit_send_wr, struct ibv_sge* credit_send_sgl,
-                           hrd_ctrl_blk_t *cb, uint8_t flr_id, uint32_t max_credt_wrs, uint16_t t_id)
-{
-  // Credit WRs
-  for (uint32_t i = 0; i < max_credt_wrs; i++) {
-    credit_send_sgl->length = 0;
-    credit_send_wr[i].opcode = IBV_WR_SEND_WITH_IMM;
-    credit_send_wr[i].num_sge = 0;
-    credit_send_wr[i].sg_list = credit_send_sgl;
-    credit_send_wr[i].imm_data = (uint32) flr_id;
-    credit_send_wr[i].wr.ud.remote_qkey = HRD_DEFAULT_QKEY;
-    credit_send_wr[i].next = NULL;
-    credit_send_wr[i].send_flags = IBV_SEND_INLINE;
-    credit_send_wr[i].wr.ud.ah = rem_qp[LEADER_MACHINE][t_id][FC_QP_ID].ah;
-    credit_send_wr[i].wr.ud.remote_qpn = (uint32_t) rem_qp[LEADER_MACHINE][t_id][FC_QP_ID].qpn;
-  }
-}
-
-
-
-/* ---------------------------------------------------------------------------
-------------------------------UTILITY --------------------------------------
----------------------------------------------------------------------------*/
 void check_protocol(int protocol)
 {
     if (protocol != FOLLOWER && protocol != LEADER) {
@@ -331,9 +274,7 @@ void check_protocol(int protocol)
     }
 }
 
-/* ---------------------------------------------------------------------------
-------------------------------MULTICAST --------------------------------------
----------------------------------------------------------------------------*/
+
 
 
 

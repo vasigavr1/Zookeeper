@@ -178,9 +178,9 @@ static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_prepare_t **preps
 
 
 ///* The leader and follower send the writes to be committed with this function*/
-static inline void zk_KVS_batch_op_reads(context_t *ctx, zk_ctx_t *zk_ctx)
+static inline void zk_KVS_batch_op_reads(context_t *ctx)
 {
-
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
   uint16_t op_i;  /* op_i is batch index */
   ptrs_to_r_t *ptrs_to_r = zk_ctx->ptrs_to_r;
   uint16_t op_num =  ptrs_to_r->polled_reads;

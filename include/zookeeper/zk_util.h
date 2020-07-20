@@ -51,8 +51,7 @@ void print_latency_stats(void);
 ---------------------------------------------------------------------------*/
 
 // Set up a struct that stores pending writes
-zk_ctx_t* set_up_pending_writes(context_t *ctx, uint32_t size,
-																	protocol_t);
+zk_ctx_t *set_up_pending_writes(context_t *ctx, protocol_t);
 
 /* ---------------------------------------------------------------------------
 ------------------------------LEADER--------------------------------------
@@ -65,7 +64,7 @@ void pre_post_recvs(uint32_t*, struct ibv_qp *, uint32_t lkey, void*,
                     uint32_t, uint32_t, uint16_t, uint32_t);
 // set up some basic leader buffers
 
-
+void zk_init_send_fifos(context_t *ctx);
 
 /* ---------------------------------------------------------------------------
 ------------------------------UTILITY --------------------------------------

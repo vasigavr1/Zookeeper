@@ -474,13 +474,36 @@ typedef struct ptrs_to_reads {
 } ptrs_to_r_t;
 
 
+typedef struct zk_trace_op {
+  uint16_t session_id;
+  mica_key_t key;
+  uint8_t opcode;// if the opcode is 0, it has never been RMWed, if it's 1 it has
+  uint8_t val_len; // this represents the maximum value len
+  uint8_t value[VALUE_SIZE]; // if it's an RMW the first 4 bytes point to the entry
+  uint8_t *value_to_write;
+  uint8_t *value_to_read; //compare value for CAS/  addition argument for F&A
+  uint32_t index_to_req_array;
+  uint32_t real_val_len; // this is the value length the client is interested in
+} zk_trace_op_t;
+
+typedef struct zk_resp {
+  uint8_t type;
+} zk_resp_t;
+
+
 // A data structute that keeps track of the outstanding writes
 typedef struct zk_ctx {
 	uint64_t *g_id;
 	fifo_t *prep_fifo;
   fifo_t *w_fifo;
-  //fifo_t *r_fifo;
   fifo_t *r_meta;
+
+	trace_t *trace;
+	uint32_t trace_iter;
+  uint16_t last_session;
+
+  zk_trace_op_t *ops;
+  zk_resp_t *resp;
 
 	zk_prepare_t **ptrs_to_ops;
 	ptrs_to_r_t *ptrs_to_r;
@@ -494,6 +517,7 @@ typedef struct zk_ctx {
   uint32_t w_size;
 
   p_acks_t *p_acks;
+	zk_ack_mes_t *ack;
 
 	uint32_t prep_pull_ptr; // Where to pull prepares from
 	uint32_t unordered_ptr;
@@ -509,6 +533,8 @@ typedef struct zk_ctx {
   quorum_info_t *q_info;
   protocol_t protocol;
   uint32_t polled_messages;
+
+	uint32_t wait_for_gid_dbg_counter;
 } zk_ctx_t;
 
 
@@ -517,21 +543,6 @@ typedef struct zk_ctx {
 
 
 
-typedef struct zk_trace_op {
-	uint16_t session_id;
-	mica_key_t key;
-	uint8_t opcode;// if the opcode is 0, it has never been RMWed, if it's 1 it has
-	uint8_t val_len; // this represents the maximum value len
-	uint8_t value[VALUE_SIZE]; // if it's an RMW the first 4 bytes point to the entry
-	uint8_t *value_to_write;
-	uint8_t *value_to_read; //compare value for CAS/  addition argument for F&A
-	uint32_t index_to_req_array;
-	uint32_t real_val_len; // this is the value length the client is interested in
-} zk_trace_op_t;
-
-typedef struct zk_resp {
-	uint8_t type;
-} zk_resp_t;
 
 typedef struct thread_stats { // 2 cache lines
 	long long cache_hits_per_thread;
