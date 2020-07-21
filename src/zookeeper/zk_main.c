@@ -44,19 +44,12 @@ int main(int argc, char *argv[])
 	pthread_attr_init(&attr);
 	bool occupied_cores[TOTAL_CORES] = { 0 };
   char node_purpose[15];
-  void *thread_func;
-  if (is_leader) {
-    sprintf(node_purpose, "Leader");
-    thread_func = leader;
-  }
-  else {
-    sprintf(node_purpose, "Follower");
-    thread_func = follower;
-  }
+  sprintf(node_purpose, is_leader ? "Leader" : "Follower");
+
 	for(uint16_t i = 0; i < TOTAL_THREADS; i++) {
     if (i < WORKERS_PER_MACHINE) {
       spawn_threads(param_arr, i, node_purpose, &pinned_hw_threads,
-                    &attr, thread_arr, thread_func, occupied_cores);
+                    &attr, thread_arr, zk_worker, occupied_cores);
     }
     else if (machine_id == LEADER_MACHINE || !MAKE_FOLLOWERS_PASSIVE) {
         assert(ENABLE_CLIENTS);

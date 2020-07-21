@@ -590,8 +590,7 @@ extern atomic_uint_fast64_t global_w_id, committed_global_w_id;
 extern bool is_leader;
 
 
-void *follower(void *arg);
-void *leader(void *arg);
+void *zk_worker(void *arg);
 void print_latency_stats(void);
 
 

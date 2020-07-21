@@ -78,28 +78,26 @@ static inline void zk_print_error_message(const char *mes, protocol_t protocol,
 // Leader checks its debug counters
 static inline void ldr_check_debug_cntrs(context_t *ctx)
 {
+  if (!ENABLE_ASSERTIONS) return;
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-  uint32_t patience =  M_16;
+  uint32_t patience =  M_32;
   if (unlikely((zk_ctx->wait_for_gid_dbg_counter) > patience)) {
     zk_print_error_message("waits for the g_id", LEADER, zk_ctx, ctx->t_id);
     print_ldr_stats(ctx->t_id);
     zk_ctx->wait_for_gid_dbg_counter = 0;
   }
-  if (unlikely((ctx->qp_meta[PREP_ACK_QP_ID].wait_for_reps_ctr) > patience)) {
-    zk_print_error_message("waits for acks", LEADER, zk_ctx, ctx->t_id);
-    my_printf(cyan, "Sent lid %u and state %s \n",
-              zk_ctx->local_w_id, w_state_to_str(zk_ctx->w_state[zk_ctx->w_pull_ptr]));
-    print_ldr_stats(ctx->t_id);
-    ctx->qp_meta[PREP_ACK_QP_ID].wait_for_reps_ctr = 0;
-    //exit(0);
-  }
-  if (unlikely(ctx->qp_meta[PREP_ACK_QP_ID].time_out_cnt % patience == 0)) {
-    zk_print_error_message("lacks prep credit", LEADER, zk_ctx, ctx->t_id);
-    print_ldr_stats(ctx->t_id);
-  }
-  if (ctx->qp_meta[COMMIT_W_QP_ID].time_out_cnt % patience == 0) {
-    zk_print_error_message("lacks comm credits", LEADER, zk_ctx, ctx->t_id);
-    print_ldr_stats(ctx->t_id);
+  for (int qp_i = 0; qp_i < ctx->qp_num; ++qp_i) {
+    per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_i];
+    if (qp_meta->wait_for_reps_ctr > patience) {
+      zk_print_error_message(qp_meta->send_string, LEADER, zk_ctx, ctx->t_id);
+      qp_meta->wait_for_reps_ctr = 0;
+    }
+
+    if (qp_meta->time_out_cnt > 0 && qp_meta->time_out_cnt % patience == 0) {
+      zk_print_error_message(qp_meta->send_string, LEADER, zk_ctx, ctx->t_id);
+      print_ldr_stats(ctx->t_id);
+    }
+
   }
 }
 
@@ -209,11 +207,12 @@ static inline void zk_check_ack_l_id_is_small_enough(uint16_t ack_num,
   }
 }
 
-static inline void zk_debug_info_bookkeep(context_t *ctx, uint16_t qp_id,
-                                          int completed_messages, uint32_t polled_messages)
+static inline void zk_debug_info_bookkeep(context_t *ctx,
+                                          uint16_t qp_id,
+                                          int completed_messages,
+                                          uint32_t polled_messages)
 {
   per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
-  if (qp_id == PREP_ACK_QP_ID && ENABLE_ASSERTIONS) assert(polled_messages == completed_messages);
   if (qp_meta->recv_type == RECV_REPLY) {
     if (polled_messages > 0) {
       if (ENABLE_ASSERTIONS) qp_meta->wait_for_reps_ctr = 0;
@@ -331,7 +330,7 @@ zk_check_prepare_and_print(zk_prepare_t *prepare,
   if (ENABLE_ASSERTIONS) {
     assert(prepare->sess_id < SESSIONS_PER_THREAD);
     assert(prepare->flr_id <= MACHINE_NUM);
-    if (!DISABLE_GID_ORDERING)
+    if (ENABLE_GIDS)
       assert(prepare->g_id > committed_global_w_id);
     assert(prepare->val_len == VALUE_SIZE >> SHIFT_BITS);
     assert(zk_ctx->w_state[push_ptr] == INVALID);
@@ -482,7 +481,13 @@ static inline void zk_checks_and_print_when_forging_unicast(context_t *ctx, uint
                r_mes->read[i].key.bkt,
                length);
       if (ENABLE_ASSERTIONS) {
-        assert(r_mes->read[i].g_id <= committed_global_w_id);
+        /// it is possible for the read to have a slightly bigger g_id
+        assert(r_mes->read[i].g_id <= committed_global_w_id + THOUSAND);
+        //if (r_mes->read[i].g_id > committed_global_w_id) {
+        //  my_printf(red, "Sending a read with a g_id %lu/%lu \n",
+        //            r_mes->read[i].g_id, committed_global_w_id);
+        //}
+        //assert(r_mes->read[i].g_id <= committed_global_w_id);
         assert(r_mes->read[i].key.bkt > 0);
       }
     }

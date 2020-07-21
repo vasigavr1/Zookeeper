@@ -8,6 +8,8 @@
 #define G_ID_EQUAL 21
 #define G_ID_TOO_SMALL 22
 
+typedef enum {NOT_USED, LOCAL_PREP, REMOTE_WRITE} source_t;
+
 
 //Cache States
 #define VALID_STATE 1

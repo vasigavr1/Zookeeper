@@ -130,7 +130,7 @@ static inline bool is_expected_g_id_ready(zk_ctx_t *zk_ctx,
                                           int pending_writes,
                                           uint16_t t_id)
 {
-  if (!DISABLE_GID_ORDERING) {
+  if (ENABLE_GID_ORDERING) {
     if (zk_ctx->g_id[zk_ctx->w_pull_ptr] != (*committed_g_id) + 1) {
       if (ENABLE_ASSERTIONS) {
         if((*committed_g_id) >= zk_ctx->g_id[zk_ctx->w_pull_ptr]) {
@@ -159,35 +159,11 @@ static inline bool is_expected_g_id_ready(zk_ctx_t *zk_ctx,
 }
 
 
-static inline void zk_take_latency_measurement_for_writes(latency_info_t *latency_info,
-                                                          uint16_t t_id)
-{
-  if (MEASURE_LATENCY && latency_info->measured_req_flag == WRITE_REQ &&
-      machine_id == LATENCY_MACHINE && t_id == LATENCY_THREAD )
-    report_latency(latency_info);
-}
-
-
-static inline void flr_change_latency_measurement_flag(zk_ctx_t *zk_ctx,
-                                                       latency_info_t *latency_info,
-                                                       uint16_t t_id)
-{
-  if (MEASURE_LATENCY) change_latency_tag(latency_info, zk_ctx->session_id[zk_ctx->w_pull_ptr], t_id);
-  if (MEASURE_LATENCY && latency_info->measured_req_flag == WRITE_REQ_BEFORE_CACHE &&
-      machine_id == LATENCY_MACHINE && t_id == LATENCY_THREAD &&
-      latency_info->measured_sess_id == zk_ctx->session_id[zk_ctx->w_pull_ptr])
-    latency_info->measured_req_flag = WRITE_REQ;
-}
-
-
-
-
 static inline void zk_signal_completion_and_bookkeepfor_writes(zk_ctx_t *zk_ctx,
                                                                uint16_t update_op_i,
                                                                uint32_t pull_ptr,
                                                                uint32_t max_pending_writes,
                                                                protocol_t protocol,
-                                                               latency_info_t *latency_info,
                                                                uint16_t t_id)
 {
   for (int w_i = 0; w_i < update_op_i; ++w_i) {
@@ -203,9 +179,6 @@ static inline void zk_signal_completion_and_bookkeepfor_writes(zk_ctx_t *zk_ctx,
       zk_ctx->stalled[sess_id] = false;
       zk_ctx->all_sessions_stalled = false;
       zk_ctx->is_local[pull_ptr] = false;
-      if (protocol == FOLLOWER)
-        flr_change_latency_measurement_flag(zk_ctx, latency_info, t_id);
-
     }
     MOD_INCR(pull_ptr, max_pending_writes);
 
@@ -218,26 +191,15 @@ static inline void zk_signal_completion_and_bookkeepfor_writes(zk_ctx_t *zk_ctx,
 //------------------------------ BROADCASTS -----------------------------
 //---------------------------------------------------------------------------*/
 
-static inline void zk_reset_prep_message(fifo_t *fifo,
-                                         uint8_t coalesce_num,
-                                         uint16_t t_id)
-{
-  // This message has been sent do not add other prepares to it!
-  if (coalesce_num < MAX_PREP_COALESCE) {
-//      my_printf(yellow, "Broadcasting prep with coalesce num %u \n", coalesce_num);
-    MOD_INCR(fifo->push_ptr, fifo->max_size);
-    zk_prep_mes_t *prep_mes = (zk_prep_mes_t *) fifo->fifo;
-    prep_mes[fifo->push_ptr].coalesce_num = 0;
-    //zk_ctx->prep_fifo->prep_message[zk_ctx->prep_fifo->w_push_ptr].coalesce_num = 0;
-  }
-}
 
 // Poll for credits and increment the credits according to the protocol
-static inline void ldr_poll_credits(struct ibv_cq* credit_recv_cq, struct ibv_wc* credit_wc,
-                                    uint16_t *credits, recv_info_t *cred_recv_info,
-                                    quorum_info_t *q_info, uint16_t t_id)
-{
+static inline void ldr_poll_credits(context_t *ctx)
 
+{
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+  per_qp_meta_t *cred_qp_meta = &ctx->qp_meta[FC_QP_ID];
+  quorum_info_t *q_info = zk_ctx->q_info;
+  uint16_t *credits = ctx->qp_meta[COMMIT_W_QP_ID].credits;
   bool poll_for_credits = false;
   for (uint8_t j = 0; j < q_info->active_num; j++) {
     if (credits[q_info->active_ids[j]] == 0) {
@@ -248,21 +210,29 @@ static inline void ldr_poll_credits(struct ibv_cq* credit_recv_cq, struct ibv_wc
   if (!poll_for_credits) return;
 
   int credits_found = 0;
-  credits_found = ibv_poll_cq(credit_recv_cq, LDR_MAX_CREDIT_RECV, credit_wc);
+  credits_found = ibv_poll_cq(cred_qp_meta->recv_cq,
+                              LDR_MAX_CREDIT_RECV,
+                              cred_qp_meta->recv_wc);
   if(credits_found > 0) {
-    if(unlikely(credit_wc[credits_found - 1].status != 0)) {
-      fprintf(stderr, "Bad wc status when polling for credits to send a broadcast %d\n", credit_wc[credits_found -1].status);
+    if(unlikely(cred_qp_meta->recv_wc[credits_found - 1].status != 0)) {
+      fprintf(stderr, "Bad wc status when polling for credits to send a broadcast %d\n",
+              cred_qp_meta->recv_wc[credits_found -1].status);
       assert(false);
     }
-    cred_recv_info->posted_recvs -= credits_found;
+    cred_qp_meta->recv_info->posted_recvs -= credits_found;
     for (uint32_t j = 0; j < credits_found; j++) {
-      credits[credit_wc[j].imm_data]+= FLR_CREDITS_IN_MESSAGE;
+      credits[cred_qp_meta->recv_wc[j].imm_data]+= FLR_CREDITS_IN_MESSAGE;
     }
+
+    //post_recvs_with_recv_info(cred_qp_meta->recv_info,
+    //                          cred_qp_meta->recv_wr_num - cred_qp_meta->recv_info->posted_recvs);
 
   }
   else if(unlikely(credits_found < 0)) {
     printf("ERROR In the credit CQ\n"); exit(0);
   }
+
+
 }
 
 
@@ -286,34 +256,19 @@ static inline void forge_commit_wrs(context_t *ctx, zk_com_mes_t *com_mes,
 
 
 // Form the Broadcast work request for the prepare
-static inline void forge_prep_wr(context_t *ctx,
-                                 zk_ctx_t *zk_ctx,
-                                 zk_prep_mes_t *prep,
-                                 uint16_t br_i)
+static inline void forge_bcast_wr(context_t *ctx,
+                                  uint16_t qp_id,
+                                  uint16_t br_i)
 {
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[PREP_ACK_QP_ID];
+  zk_ctx_t * zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
+  struct ibv_sge *send_sgl = qp_meta->send_sgl;
+
   fifo_t *send_fifo = qp_meta->send_fifo;
-
-  uint32_t backward_ptr = fifo_get_pull_backward_ptr(send_fifo);
-  uint16_t coalesce_num = prep->coalesce_num;
-  qp_meta->send_sgl[br_i].length = PREP_MES_HEADER + coalesce_num * sizeof(zk_prepare_t);
-  qp_meta->send_sgl[br_i].addr = (uint64_t) (uintptr_t) prep;
-  for (uint16_t i = 0; i < coalesce_num; i++) {
-    zk_ctx->w_state[(backward_ptr + i) % LEADER_PENDING_WRITES] = SENT;
-    if (DEBUG_PREPARES)
-      printf("Prepare %d, val-len %u, message capacity %d\n", i, prep->prepare[i].val_len,
-             qp_meta->send_sgl[br_i].length);
-    if (ENABLE_ASSERTIONS) {
-      assert(prep->prepare[i].val_len == VALUE_SIZE >> SHIFT_BITS);
-      assert(prep->prepare[i].opcode == KVS_OP_PUT);
-    }
-
-  }
-  if (DEBUG_PREPARES)
-    my_printf(green, "Leader %d : I BROADCAST a prepare message %d of %u prepares with total w_size %u,  with  credits: %d, lid: %lu  \n",
-              ctx->t_id, prep->opcode, coalesce_num, qp_meta->send_sgl[br_i].length, qp_meta->credits[0], prep->l_id);
+  send_sgl[br_i].length = get_fifo_slot_meta_pull(send_fifo)->byte_size;
+  send_sgl[br_i].addr = (uintptr_t) get_fifo_pull_slot(send_fifo);
   form_bcast_links(&qp_meta->sent_tx, qp_meta->ss_batch, zk_ctx->q_info, br_i,
-                   qp_meta->send_wr, qp_meta->send_cq, "forging prepares", ctx->t_id);
+                   qp_meta->send_wr, qp_meta->send_cq, qp_meta->send_string, ctx->t_id);
 }
 
 
@@ -389,7 +344,7 @@ static inline void zk_create_commit_message(fifo_t *com_fifo, uint64_t l_id, uin
 }
 
 /* ---------------------------------------------------------------------------
-//------------------------------TRACE --------------------------------
+//------------------------------INSERTS --------------------------------
 //---------------------------------------------------------------------------*/
 
 static inline void fill_prep(zk_prepare_t *prep, mica_key_t key, uint8_t opcode, uint8_t val_len,
@@ -433,135 +388,56 @@ static inline void fill_r_rep(zk_read_t *read,
   } while (!(check_seqlock_lock_free(&kv_ptr->seqlock, &tmp_lock)));
 }
 
-// Insert a new local or remote write to the leader pending writes
-static inline void ldr_insert_write(context_t *ctx, zk_ctx_t *zk_ctx,
-                                    void *source, bool local)
+
+static inline uint16_t fill_prepare_based_on_source(context_t *ctx,
+                                                    zk_prepare_t *prep,
+                                                    void *source,
+                                                    source_t source_flag)
 {
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[PREP_ACK_QP_ID];
-  fifo_t *send_fifo =  qp_meta->send_fifo;
-  zk_prep_mes_t *preps = (zk_prep_mes_t *) send_fifo->fifo;
-  uint32_t prep_ptr = send_fifo->push_ptr;
-  uint32_t inside_prep_ptr = preps[prep_ptr].coalesce_num;
-  uint32_t w_ptr = zk_ctx->w_push_ptr;
-  zk_prepare_t *prep = &preps[prep_ptr].prepare[inside_prep_ptr];
-  uint32_t session_id;
-  if (local) {
+
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+  if (source_flag == LOCAL_PREP) {
     zk_trace_op_t *op = (zk_trace_op_t *) source;
-    session_id = op->session_id;
     fill_prep(prep, op->key, op->opcode, op->val_len, op->value,
-              ctx->m_id, (uint16_t) session_id);
-    zk_ctx->index_to_req_array[session_id] = op->index_to_req_array;
+              ctx->m_id, (uint16_t)  op->session_id);
+    zk_ctx->index_to_req_array[op->session_id] = op->index_to_req_array;
+    return op->session_id;
   }
   else {
+    if (ENABLE_ASSERTIONS) assert(source_flag == REMOTE_WRITE);
     zk_write_t *rem_write = (zk_write_t *) source;
-    session_id = rem_write->sess_id;
-    fill_prep(prep, rem_write->key, rem_write->opcode, rem_write->val_len, rem_write->value,
+    fill_prep(prep, rem_write->key, rem_write->opcode,
+              rem_write->val_len, rem_write->value,
               rem_write->flr_id, (uint16_t) rem_write->sess_id);
+    return (uint16_t) rem_write->sess_id;
   }
 
-  // link it with zk_ctx to lead it later it to the KVS
-  zk_ctx->ptrs_to_ops[w_ptr] = prep;
-
-  // If it's the first message give it an lid
-  if (inside_prep_ptr == 0) {
-    fifo_set_push_backward_ptr(send_fifo, w_ptr);
-    uint64_t message_l_id = (uint64_t) (zk_ctx->local_w_id + zk_ctx->w_size);
-    preps[prep_ptr].l_id = (uint64_t) message_l_id;
-  }
-  checks_when_leader_creates_write(preps, prep_ptr, inside_prep_ptr,
-                                   zk_ctx, w_ptr, ctx->t_id);
-
-  // Bookkeeping
-  zk_ctx->w_state[w_ptr] = VALID;
-
-  zk_ctx->is_local[w_ptr] = local;
-  zk_ctx->session_id[w_ptr] = (uint32_t) session_id;
-  MOD_INCR(zk_ctx->w_push_ptr, LEADER_PENDING_WRITES);
-  zk_ctx->w_size++;
-  send_fifo->net_capacity++;
-  preps[prep_ptr].coalesce_num++;
-  if (preps[prep_ptr].coalesce_num == MAX_PREP_COALESCE) {
-    MOD_INCR(send_fifo->push_ptr, PREP_FIFO_SIZE);
-    preps[send_fifo->push_ptr].coalesce_num = 0;
-  }
-}
-
-// Follower inserts a new local write to the write fifo it maintains (for the writes that it propagates to the leader)
-static inline void flr_insert_write(context_t *ctx,
-                                    zk_ctx_t *zk_ctx,
-                                    zk_trace_op_t *op)
-{
-  fifo_t *send_fifo = ctx->qp_meta[COMMIT_W_QP_ID].send_fifo;
-  zk_write_t *write = (zk_write_t *)
-    get_send_fifo_ptr(send_fifo, sizeof(zk_write_t), 1, false, ctx->t_id);
-  fill_write(write, op->key, op->opcode, op->val_len, op->value,
-             ctx->m_id, op->session_id);
-
-
-  slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
-  zk_w_mes_t *w_mes = (zk_w_mes_t *) get_fifo_push_slot(send_fifo);
-  if (slot_meta->coalesce_num == 1) {
-    fifo_incr_capacity(send_fifo);
-    w_mes->coalesce_num = 1;
-  }
-  else w_mes->coalesce_num++;
-
-  zk_ctx->index_to_req_array[op->session_id] = op->index_to_req_array;
-  fifo_incr_net_capacity(send_fifo);
 }
 
 
-static inline void flr_insert_read(context_t *ctx,
-                                   zk_ctx_t *zk_ctx,
-                                   zk_trace_op_t *op)
+static inline void fill_read(context_t *ctx, zk_read_t *read)
 {
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[R_QP_ID];
-  fifo_t* send_fifo = qp_meta->send_fifo;
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
   r_meta_t *r_meta = (r_meta_t *) get_fifo_push_slot(zk_ctx->r_meta);
-  zk_read_t *read = (zk_read_t *)
-    get_send_fifo_ptr(send_fifo, R_SIZE, R_REP_BIG_SIZE, false, ctx->t_id);
-
   read->opcode = KVS_OP_GET;
   read->key = r_meta->key;
   read->g_id = r_meta->g_id;
-
-
-
-
-  slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
-  zk_r_mes_t *r_mes = (zk_r_mes_t *) get_fifo_push_slot(send_fifo);
-  if (ENABLE_ASSERTIONS) {
-    assert(read == &r_mes->read[slot_meta->coalesce_num - 1]);
-  }
-
-  if (slot_meta->coalesce_num == 1) {
-    fifo_incr_capacity(send_fifo);
-    //printf("Inserting a new read message \n");
-    r_mes->coalesce_num = 1;
-    r_mes->l_id = r_meta->l_id;
-    fifo_set_push_backward_ptr(send_fifo, zk_ctx->r_meta->push_ptr);
-  }
-  else r_mes->coalesce_num++;
-
-  fifo_incr_push_ptr(zk_ctx->r_meta);
-  fifo_incr_net_capacity(send_fifo);
 }
 
-static inline void ldr_insert_r_rep(context_t *ctx,
-                                    zk_ctx_t *zk_ctx,
-                                    mica_op_t *kv_ptr,
-                                    uint16_t op_i)
+
+static inline void insert_r_rep_help(context_t *ctx, void *r_rep_ptr,
+                                     void *source, uint32_t op_i)
 {
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[R_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
   ptrs_to_r_t *ptrs_to_r = zk_ctx->ptrs_to_r;
   zk_read_t *read = ptrs_to_r->ptr_to_ops[op_i];
 
 
-  zk_r_rep_big_t *r_rep = get_send_fifo_ptr(send_fifo, R_REP_SMALL_SIZE, 0,
-                                            !ptrs_to_r->coalesce_r_rep[op_i], ctx->t_id);
+  zk_r_rep_big_t *r_rep = (zk_r_rep_big_t *) r_rep_ptr;
 
-  fill_r_rep(read, r_rep, kv_ptr, ctx->t_id);
+  fill_r_rep(read, r_rep, (mica_op_t *) source, ctx->t_id);
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
   if (r_rep->opcode == G_ID_TOO_SMALL)
@@ -569,26 +445,121 @@ static inline void ldr_insert_r_rep(context_t *ctx,
 
   zk_r_rep_mes_t *r_rep_mes = (zk_r_rep_mes_t *) get_fifo_push_slot(send_fifo);
   if (slot_meta->coalesce_num == 1) {
-    fifo_incr_capacity(send_fifo);
-    r_rep_mes->coalesce_num = 1;
     r_rep_mes->l_id = ptrs_to_r->ptr_to_r_mes[op_i]->l_id;
     slot_meta->rm_id = ptrs_to_r->ptr_to_r_mes[op_i]->m_id;
-    //printf("Creating r_rep \n");
   }
-  else r_rep_mes->coalesce_num++;
+}
+
+static inline void insert_write_help(context_t *ctx, void *w_ptr,
+                                     void *source, uint32_t source_flag)
+{
+  zk_write_t *write = (zk_write_t *) w_ptr;
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+
+  zk_trace_op_t *op = (zk_trace_op_t *) source;
+  fill_write(write, op->key, op->opcode, op->val_len, op->value,
+             ctx->m_id, op->session_id);
+  zk_ctx->index_to_req_array[op->session_id] = op->index_to_req_array;
+
+}
+
+// Insert a new local or remote write to the leader pending writes
+static inline void insert_prep_help(context_t *ctx, void* prep_ptr,
+                                    void *source, uint32_t source_flag)
+{
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PREP_ACK_QP_ID];
+  fifo_t *send_fifo = qp_meta->send_fifo;
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+  uint32_t w_ptr = zk_ctx->w_push_ptr;
+
+  zk_prepare_t *prep = (zk_prepare_t *) prep_ptr;
+  uint32_t session_id = fill_prepare_based_on_source(ctx, prep, source, (source_t) source_flag);
+
+  // link it with zk_ctx to lead it later it to the KVS
+  zk_ctx->ptrs_to_ops[w_ptr] = prep;
+
+  slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
+  zk_prep_mes_t *prep_mes = (zk_prep_mes_t *) get_fifo_push_slot(send_fifo);
+  // If it's the first message give it an lid
+  if (slot_meta->coalesce_num == 1) {
+    prep_mes->l_id = (uint64_t) (zk_ctx->local_w_id + zk_ctx->w_size);
+    fifo_set_push_backward_ptr(send_fifo, zk_ctx->w_push_ptr);
+  }
+
+
+
+  //checks_when_leader_creates_write((zk_prep_mes_t *) send_fifo->fifo, send_fifo->push_ptr,
+  //                                 (uint32_t) slot_meta->coalesce_num - 1,
+  //                                 zk_ctx, w_ptr, ctx->t_id);
+
+  // Bookkeeping
+  zk_ctx->w_state[w_ptr] = VALID;
+  zk_ctx->is_local[w_ptr] = source_flag == LOCAL_PREP;
+  zk_ctx->session_id[w_ptr] = (uint32_t) session_id;
+  MOD_INCR(zk_ctx->w_push_ptr, LEADER_PENDING_WRITES);
+  zk_ctx->w_size++;
+}
+
+static inline void insert_read_help(context_t *ctx, void *r_ptr,
+                                    void *source, uint32_t source_flag)
+{
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+  r_meta_t *r_meta = (r_meta_t *) get_fifo_push_slot(zk_ctx->r_meta);
+  fill_read(ctx, (zk_read_t *) r_ptr);
+
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[R_QP_ID];
+  fifo_t* send_fifo = qp_meta->send_fifo;
+  slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
+  zk_r_mes_t *r_mes = (zk_r_mes_t *) get_fifo_push_slot(send_fifo);
+  if (ENABLE_ASSERTIONS) {
+    assert(r_ptr == (void *)&r_mes->read[slot_meta->coalesce_num - 1]);
+  }
+
+  if (slot_meta->coalesce_num == 1) {
+    r_mes->l_id = r_meta->l_id;
+    fifo_set_push_backward_ptr(send_fifo, zk_ctx->r_meta->push_ptr);
+  }
+  fifo_incr_push_ptr(zk_ctx->r_meta);
+}
+
+static inline void insert_mes(context_t *ctx,
+                              uint16_t qp_id,
+                              uint32_t send_size,
+                              uint32_t recv_size,
+                              bool break_message,
+                              void* source,
+                              uint32_t source_flag)
+{
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
+  fifo_t* send_fifo = qp_meta->send_fifo;
+  void *ptr = get_send_fifo_ptr(send_fifo, send_size, recv_size,
+                                break_message, ctx->t_id);
+
+  qp_meta->mfs->insert_helper(ctx, ptr, source, source_flag);
+
+  slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
+
+
+  if (slot_meta->coalesce_num == 1)
+    fifo_incr_capacity(send_fifo);
 
   fifo_incr_net_capacity(send_fifo);
 }
 
 
-static inline void zk_fill_trace_op(context_t *ctx, trace_t *trace, zk_trace_op_t *op,
-                                    int working_session, protocol_t protocol,
-                                    zk_ctx_t *zk_ctx,
-                                    latency_info_t *latency_info)
+/* ---------------------------------------------------------------------------
+//------------------------------TRACE --------------------------------
+//---------------------------------------------------------------------------*/
+
+static inline void zk_fill_trace_op(context_t *ctx,
+                                    trace_t *trace_op,
+                                    zk_trace_op_t *op,
+                                    int working_session)
 {
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
   create_inputs_of_op(&op->value_to_write, &op->value_to_read, &op->real_val_len,
                       &op->opcode, &op->index_to_req_array,
-                      &op->key, op->value, trace, working_session, ctx->t_id);
+                      &op->key, op->value, trace_op, working_session, ctx->t_id);
 
   zk_check_op(op);
 
@@ -596,13 +567,12 @@ static inline void zk_fill_trace_op(context_t *ctx, trace_t *trace, zk_trace_op_
   bool is_update = op->opcode == KVS_OP_PUT;
   if (WRITE_RATIO >= 1000) assert(is_update);
    op->val_len = is_update ? (uint8_t) (VALUE_SIZE >> SHIFT_BITS) : (uint8_t) 0;
-  if (MEASURE_LATENCY)
-    start_measurement(latency_info, (uint32_t) working_session, ctx->t_id, op->opcode);
+
   op->session_id = (uint16_t) working_session;
 
 
   zk_ctx->stalled[working_session] =
-    (is_update) || (USE_REMOTE_READS && protocol == FOLLOWER);
+    (is_update) || (USE_REMOTE_READS && zk_ctx->protocol == FOLLOWER);
 
   if (ENABLE_CLIENTS) {
     signal_in_progress_to_client(op->session_id, op->index_to_req_array, ctx->t_id);

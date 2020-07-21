@@ -158,9 +158,10 @@ static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_prepare_t **preps
       assert(false);
     }
     if (op->opcode == KVS_OP_PUT) {
-      if (!DISABLE_GID_ORDERING) assert(op->g_id >= committed_global_w_id);
+      if (ENABLE_GID_ORDERING) // only if global ordering is enforced the assertion stands
+        assert(op->g_id >= committed_global_w_id);
       lock_seqlock(&kv_ptr[op_i]->seqlock);
-      kv_ptr[op_i]->g_id = op->g_id;
+      if (ENABLE_GIDS) kv_ptr[op_i]->g_id = op->g_id;
       memcpy(kv_ptr[op_i]->value, op->value, (size_t) VALUE_SIZE);
       unlock_seqlock(&kv_ptr[op_i]->seqlock);
     }
@@ -216,7 +217,10 @@ static inline void zk_KVS_batch_op_reads(context_t *ctx)
       assert(false);
     }
     if (read->opcode == KVS_OP_GET) {
-      ldr_insert_r_rep(ctx, zk_ctx, kv_ptr[op_i], op_i);
+      insert_mes(ctx, R_QP_ID, R_REP_SMALL_SIZE, 0,
+                 !ptrs_to_r->coalesce_r_rep[op_i],
+                 (void *) kv_ptr[op_i], op_i);
+      //ldr_insert_r_rep(ctx, zk_ctx, kv_ptr[op_i], op_i);
     }
     else {
       my_printf(red, "wrong Opcode to a read in kvs: %d, req %d, flr_id %u,  g_id %lu , \n",

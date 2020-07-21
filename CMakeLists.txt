@@ -45,8 +45,7 @@ set(COMMON_FILES
 
 set(ZK_SOURCE_FILES
         src/zookeeper/zk_main.c
-        src/zookeeper/zk_leader.c
-        src/zookeeper/zk_follower.c
+        src/zookeeper/zk_worker.c
         src/zookeeper/zk_stats.c
         src/zookeeper/zk_util.c
         include/zookeeper/zk_cache.h

@@ -49,21 +49,13 @@ void print_latency_stats(void);
 /* ---------------------------------------------------------------------------
 ------------------------------INITIALIZATION --------------------------------------
 ---------------------------------------------------------------------------*/
+void zk_init_qp_meta(context_t *ctx, protocol_t protocol);
 
 // Set up a struct that stores pending writes
-zk_ctx_t *set_up_pending_writes(context_t *ctx, protocol_t);
+zk_ctx_t *set_up_zk_ctx(context_t *ctx, protocol_t);
 
-/* ---------------------------------------------------------------------------
-------------------------------LEADER--------------------------------------
----------------------------------------------------------------------------*/
-// construct a prep_message-- max_size must be in bytes
-void init_fifo(struct fifo **fifo, uint32_t max_size, uint32_t);
 
-// Post receives for the coherence traffic in the init phase
-void pre_post_recvs(uint32_t*, struct ibv_qp *, uint32_t lkey, void*,
-                    uint32_t, uint32_t, uint16_t, uint32_t);
 // set up some basic leader buffers
-
 void zk_init_send_fifos(context_t *ctx);
 
 /* ---------------------------------------------------------------------------
