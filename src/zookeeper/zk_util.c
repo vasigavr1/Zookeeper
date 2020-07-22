@@ -302,40 +302,26 @@ void zk_init_qp_meta(context_t *ctx, protocol_t protocol)
 zk_ctx_t *set_up_zk_ctx(context_t *ctx, protocol_t protocol)
 {
 
-  int i;
+  uint32_t i;
   zk_ctx_t* zk_ctx = (zk_ctx_t*) calloc(1,sizeof(zk_ctx_t));
   zk_ctx->q_info = protocol == LEADER ? set_up_q_info(ctx) : NULL;
   uint32_t size = protocol == LEADER ? LEADER_PENDING_WRITES : FLR_PENDING_WRITES;
   zk_ctx->protocol = protocol;
 
   zk_ctx->w_rob = fifo_constructor(size, sizeof(w_rob_t), false, 0, 1);
-
-  //zk_ctx->prep_fifo = ctx->qp_meta[PREP_ACK_QP_ID].send_fifo;
-  //zk_ctx->w_fifo = ctx->qp_meta[COMMIT_W_QP_ID].send_fifo;
-
-  zk_ctx->g_id = (uint64_t *) malloc(size * sizeof(uint64_t));
-  zk_ctx->w_state = (enum op_state *) malloc(size * sizeof(enum op_state));
-  zk_ctx->session_id = (uint32_t *) calloc(size, sizeof(uint32_t));
-  zk_ctx->acks_seen = (uint8_t *) calloc(size, sizeof(uint8_t));
   zk_ctx->index_to_req_array = (uint32_t *) calloc(SESSIONS_PER_THREAD, sizeof(uint32_t));
 
-  zk_ctx->flr_id = (uint8_t *) malloc(size * sizeof(uint8_t));
-  zk_ctx->is_local = (bool *) malloc(size * sizeof(bool));
   zk_ctx->stalled = (bool *) malloc(SESSIONS_PER_THREAD * sizeof(bool));
-  zk_ctx->ptr_to_op = (zk_prepare_t **) malloc(size * sizeof(zk_prepare_t *));
-  //if (protocol == FOLLOWER) init_fifo(&(zk_ctx->w_fifo), W_FIFO_SIZE * sizeof(zk_w_mes_t), 1);
-  memset(zk_ctx->g_id, 0, size * sizeof(uint64_t));
-  //zk_ctx->prep_fifo = (zk_prep_fifo_t *) calloc(1, sizeof(zk_prep_fifo_t));
-  //  zk_ctx->prep_fifo->prep_message =
-  //  (zk_prep_mes_t *) calloc(PREP_FIFO_SIZE, sizeof(zk_prep_mes_t));
-  //assert(zk_ctx->prep_fifo != NULL);
+
   zk_ctx->ops = (zk_trace_op_t *) calloc((size_t) ZK_TRACE_BATCH, sizeof(zk_trace_op_t));
   zk_ctx->resp = (zk_resp_t*) calloc((size_t) ZK_TRACE_BATCH, sizeof(zk_resp_t));
-  for(int i = 0; i <  ZK_TRACE_BATCH; i++) zk_ctx->resp[i].type = EMPTY;
+  for(i = 0; i <  ZK_TRACE_BATCH; i++) zk_ctx->resp[i].type = EMPTY;
 
   for (i = 0; i < SESSIONS_PER_THREAD; i++) zk_ctx->stalled[i] = false;
   for (i = 0; i < size; i++) {
-    zk_ctx->w_state[i] = INVALID;
+    w_rob_t *w_rob = (w_rob_t *) get_fifo_slot(zk_ctx->w_rob, i);
+    w_rob->w_state = INVALID;
+    w_rob->g_id = 0;
   }
   if (protocol == LEADER) {
     zk_ctx->ptrs_to_r = calloc(1, sizeof(ptrs_to_r_t));
@@ -349,7 +335,7 @@ zk_ctx_t *set_up_zk_ctx(context_t *ctx, protocol_t protocol)
     zk_ctx->ack->opcode = KVS_OP_ACK;
     zk_ctx->ack->follower_id = ctx->m_id;
     zk_ctx->p_acks = (p_acks_t *) calloc(1, sizeof(p_acks_t));
-    zk_ctx->r_meta = fifo_constructor(FLR_PENDING_READS, sizeof(r_meta_t), false, 0, 1);
+    zk_ctx->r_rob = fifo_constructor(FLR_PENDING_READS, sizeof(r_rob_t), false, 0, 1);
   }
 
   if (!ENABLE_CLIENTS)

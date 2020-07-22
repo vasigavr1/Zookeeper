@@ -58,9 +58,10 @@ static inline void zk_print_error_message(const char *mes, protocol_t protocol,
                                           zk_ctx_t *zk_ctx, uint16_t t_id)
 {
   uint64_t anticipated_g_id = 0;
+  w_rob_t * w_rob = (w_rob_t *) get_fifo_pull_slot(zk_ctx->w_rob);
 
-  if (zk_ctx->w_state[zk_ctx->w_pull_ptr] == READY)
-    anticipated_g_id = zk_ctx->g_id[zk_ctx->w_pull_ptr];
+  if (w_rob->w_state == READY)
+    anticipated_g_id = w_rob->g_id;
 
   my_printf(red, "%s %u %s, committed g_id %lu, ",
             prot_to_str(protocol), t_id, mes,
@@ -161,15 +162,19 @@ static inline void flr_check_debug_cntrs(uint32_t *credit_debug_cnt, uint32_t *w
 }
 
 // Check the states of pending writes
-static inline void check_ldr_p_states(zk_ctx_t *zk_ctx, uint16_t t_id)
+static inline void check_ldr_p_states(context_t *ctx)
 {
-  assert(zk_ctx->w_size <= LEADER_PENDING_WRITES);
-  for (uint16_t w_i = 0; w_i < LEADER_PENDING_WRITES - zk_ctx->w_size; w_i++) {
-    uint16_t ptr = (zk_ctx->w_push_ptr + w_i) % LEADER_PENDING_WRITES;
-    if (zk_ctx->w_state[ptr] != INVALID) {
+
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+  assert(zk_ctx->w_rob->capacity <= LEADER_PENDING_WRITES);
+  for (uint32_t w_i = 0; w_i < LEADER_PENDING_WRITES - zk_ctx->w_rob->capacity; w_i++) {
+    uint32_t ptr = (zk_ctx->w_rob->push_ptr + w_i);
+    w_rob_t *w_rob = (w_rob_t *) get_fifo_slot_mod(zk_ctx->w_rob, ptr);
+    if (w_rob->w_state != INVALID) {
       my_printf(red, "LDR %d push ptr %u, pull ptr %u, capacity %u, state %d at ptr %u \n",
-                t_id, zk_ctx->w_push_ptr, zk_ctx->w_pull_ptr, zk_ctx->w_size, zk_ctx->w_state[ptr], ptr);
-      print_ldr_stats(t_id);
+                ctx->t_id, zk_ctx->w_rob->push_ptr, zk_ctx->w_rob->pull_ptr,
+                zk_ctx->w_rob->capacity, w_rob->w_state, ptr);
+      print_ldr_stats(ctx->t_id);
       assert(false);
     }
   }
@@ -207,7 +212,7 @@ static inline void zk_check_ack_l_id_is_small_enough(uint16_t ack_num,
                                                      uint64_t pull_lid, uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
-    assert(l_id + ack_num <= pull_lid + zk_ctx->w_size);
+    assert(l_id + ack_num <= pull_lid + zk_ctx->w_rob->capacity);
     if ((l_id + ack_num < pull_lid) && (!USE_QUORUM)) {
       my_printf(red, "l_id %u, ack_num %u, pull_lid %u \n", l_id, ack_num, pull_lid);
       assert(false);
@@ -258,10 +263,10 @@ static inline void zk_check_polled_commit_and_print(zk_com_mes_t *com,
   if (ENABLE_ASSERTIONS) {
     assert(com->opcode == KVS_OP_PUT);
     if ((pull_lid > l_id) ||
-       ((l_id + com_num > pull_lid + zk_ctx->w_size) &&
+       ((l_id + com_num > pull_lid + zk_ctx->w_rob->capacity) &&
        (!USE_QUORUM))) {
       my_printf(red, "Flr %d, COMMIT: received lid %lu, com_num %u, pull_lid %lu, zk_ctx capacity  %u \n",
-                t_id, l_id, com_num, pull_lid, zk_ctx->w_size);
+                t_id, l_id, com_num, pull_lid, zk_ctx->w_rob->capacity);
       print_ldr_stats(t_id);
       assert(false);
     }
@@ -289,7 +294,7 @@ static inline void zk_increment_wait_for_preps_cntr(zk_ctx_t *zk_ctx,
                                                     p_acks_t *p_acks,
                                                     uint32_t *wait_for_prepares_dbg_counter)
 {
-  if (ENABLE_ASSERTIONS && p_acks->acks_to_send == 0 && zk_ctx->w_size == 0)
+  if (ENABLE_ASSERTIONS && p_acks->acks_to_send == 0 && zk_ctx->w_rob->capacity == 0)
     (*wait_for_prepares_dbg_counter)++;
 }
 
@@ -334,19 +339,18 @@ zk_check_prepare_and_print(zk_prepare_t *prepare,
                            uint8_t prep_i,
                            uint16_t t_id)
 {
-  uint32_t push_ptr = zk_ctx->w_push_ptr;
   if (ENABLE_ASSERTIONS) {
     assert(prepare->sess_id < SESSIONS_PER_THREAD);
     assert(prepare->flr_id <= MACHINE_NUM);
     if (ENABLE_GIDS)
       assert(prepare->g_id > committed_global_w_id);
     assert(prepare->val_len == VALUE_SIZE >> SHIFT_BITS);
-    assert(zk_ctx->w_state[push_ptr] == INVALID);
+    assert(((w_rob_t *) get_fifo_push_slot(zk_ctx->w_rob))->w_state == INVALID);
 
   }
   if (DEBUG_PREPARES)
     my_printf(green, "Flr %u, prep_i %u new write at ptr %u with g_id %lu and flr id %u, value_len %u \n",
-              t_id, prep_i, push_ptr, prepare->g_id, prepare->flr_id, prepare[prep_i].val_len);
+              t_id, prep_i, zk_ctx->w_rob->push_ptr, prepare->g_id, prepare->flr_id, prepare[prep_i].val_len);
 }
 
 
@@ -361,7 +365,7 @@ static inline void zk_checks_after_polling_prepares(zk_ctx_t *zk_ctx,
   if (polled_messages > 0) {
     if (ENABLE_ASSERTIONS) (*wait_for_prepares_dbg_counter) = 0;
   }
-  if (ENABLE_STAT_COUNTING && p_acks->acks_to_send == 0 && zk_ctx->w_size == 0) t_stats[t_id].stalled_ack_prep++;
+  if (ENABLE_STAT_COUNTING && p_acks->acks_to_send == 0 && zk_ctx->w_rob->capacity == 0) t_stats[t_id].stalled_ack_prep++;
   if (ENABLE_ASSERTIONS) assert(prep_recv_info->posted_recvs >= polled_messages);
   if (ENABLE_ASSERTIONS) assert(prep_recv_info->posted_recvs <= FLR_MAX_RECV_PREP_WRS);
 }
@@ -455,7 +459,7 @@ static inline void check_stats_prints_when_sending_acks(zk_ack_mes_t *ack,
 {
   if (ENABLE_ASSERTIONS) {
     assert(ack->l_id == l_id_to_send);
-    assert (p_acks->slots_ahead <= zk_ctx->w_size);
+    assert (p_acks->slots_ahead <= zk_ctx->w_rob->capacity);
   }
   if (ENABLE_STAT_COUNTING) {
     t_stats[t_id].acks_sent += ack->ack_num;
@@ -464,7 +468,7 @@ static inline void check_stats_prints_when_sending_acks(zk_ack_mes_t *ack,
 
   if (DEBUG_ACKS)
     my_printf(yellow, "Flr %d is sending an ack for lid %lu and ack num %d and flr id %d, zk_ctx capacity %u/%d \n",
-              t_id, l_id_to_send, ack->ack_num, ack->follower_id, zk_ctx->w_size, FLR_PENDING_WRITES);
+              t_id, l_id_to_send, ack->ack_num, ack->follower_id, zk_ctx->w_rob->capacity, FLR_PENDING_WRITES);
   if (ENABLE_ASSERTIONS) assert(ack->ack_num > 0 && ack->ack_num <= FLR_PENDING_WRITES);
 }
 
@@ -625,12 +629,14 @@ static inline void checks_when_leader_creates_write(zk_prep_mes_t *preps, uint32
         }
       }
     }
-    if (zk_ctx->w_state[w_ptr] != INVALID)
+    w_rob_t * w_rob = (w_rob_t *) get_fifo_slot(zk_ctx->w_rob, w_ptr);
+
+    if (w_rob->w_state != INVALID)
       my_printf(red, "Leader %u w_state %d at w_ptr %u, g_id %lu, cache hits %lu, capacity %u \n",
-                t_id, zk_ctx->w_state[w_ptr], w_ptr, zk_ctx->g_id[w_ptr],
-                t_stats[t_id].cache_hits_per_thread, zk_ctx->w_size);
+                t_id, w_rob->w_state, w_ptr, w_rob->g_id,
+                t_stats[t_id].cache_hits_per_thread, zk_ctx->w_rob->capacity);
     //printf("Sent %d, Valid %d, Ready %d \n", SENT, VALID, READY);
-    assert(zk_ctx->w_state[w_ptr] == INVALID);
+    assert(w_rob->w_state == INVALID);
 
   }
 }

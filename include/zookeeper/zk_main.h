@@ -443,19 +443,7 @@ struct zk_r_message_template {
 
 
 
-typedef struct read_meta {
-  bool seen_larger_g_id;
-  uint8_t opcode;
-  mica_key_t key;
-  uint8_t value[VALUE_SIZE]; //
-  uint8_t *value_to_read;
-  uint32_t state;
-  uint32_t log_no;
-  uint32_t val_len;
-  uint32_t sess_id;
-  uint64_t g_id;
-	uint64_t l_id;
-} r_meta_t ;
+
 
 
 
@@ -492,6 +480,20 @@ typedef struct zk_resp {
   uint8_t type;
 } zk_resp_t;
 
+typedef struct r_rob {
+	bool seen_larger_g_id;
+	uint8_t opcode;
+	mica_key_t key;
+	uint8_t value[VALUE_SIZE]; //
+	uint8_t *value_to_read;
+	uint32_t state;
+	uint32_t log_no;
+	uint32_t val_len;
+	uint32_t sess_id;
+	uint64_t g_id;
+	uint64_t l_id;
+} r_rob_t ;
+
 
 typedef struct w_rob {
 	uint32_t session_id;
@@ -499,19 +501,16 @@ typedef struct w_rob {
 	enum op_state w_state;
 	uint8_t flr_id;
 	uint8_t acks_seen;
-	uint32_t index_to_req_array;
+	//uint32_t index_to_req_array;
 	bool is_local;
-	zk_prepare_t *ptrs_to_op;
+	zk_prepare_t *ptr_to_op;
 
 } w_rob_t;
 
 // A data structute that keeps track of the outstanding writes
 typedef struct zk_ctx {
-	uint64_t *g_id;
-
-  fifo_t *r_meta;
+  fifo_t *r_rob;
 	fifo_t *w_rob;
-
 
 	trace_t *trace;
 	uint32_t trace_iter;
@@ -520,30 +519,19 @@ typedef struct zk_ctx {
   zk_trace_op_t *ops;
   zk_resp_t *resp;
 
-	zk_prepare_t **ptr_to_op;
 	ptrs_to_r_t *ptrs_to_r;
 	uint64_t local_w_id;
   uint64_t local_r_id;
-	uint32_t *session_id;
-
-	enum op_state *w_state;
-	uint32_t w_push_ptr;
-	uint32_t w_pull_ptr;
-  uint32_t w_size;
 
   p_acks_t *p_acks;
 	zk_ack_mes_t *ack;
 
-	uint32_t prep_pull_ptr; // Where to pull prepares from
 	uint32_t unordered_ptr;
   uint64_t highest_g_id_taken;
-	uint8_t *flr_id;
-	uint8_t *acks_seen;
+
   uint32_t *index_to_req_array; // [SESSIONS_PER_THREAD]
-
-
-	bool *is_local;
 	bool *stalled;
+
 	bool all_sessions_stalled;
   quorum_info_t *q_info;
   protocol_t protocol;

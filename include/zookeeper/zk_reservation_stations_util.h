@@ -44,7 +44,8 @@ static inline void flr_increases_write_credits(context_t *ctx,
                                                fifo_t *remote_w_buf)
 {
   per_qp_meta_t *qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
-  if (zk_ctx->flr_id[com_ptr] == ctx->m_id) {
+  w_rob_t *w_rob = (w_rob_t *) get_fifo_slot(zk_ctx->w_rob, com_ptr);
+  if (w_rob->flr_id == ctx->m_id) {
     assert(qp_meta->mirror_remote_recv_fifo == remote_w_buf);
     (*qp_meta->credits) += remove_from_the_mirrored_buffer(remote_w_buf,
                                                   1, ctx->t_id, 0,
@@ -67,26 +68,25 @@ static inline bool zk_write_not_ready(zk_com_mes_t *com,
   // we have seen and acked, and a subset not yet seen or acked,
   // We need to commit the seen subset to avoid a deadlock
   bool wrap_around = com->l_id + com_i - zk_ctx->local_w_id >= FLR_PENDING_WRITES;
-  if (wrap_around) assert(com_ptr == zk_ctx->w_pull_ptr);
+  if (wrap_around) assert(com_ptr == zk_ctx->w_rob->pull_ptr);
+  w_rob_t *w_rob = (w_rob_t *) get_fifo_slot(zk_ctx->w_rob, com_ptr);
 
-
-  if (wrap_around || zk_ctx->w_state[com_ptr] != SENT) {
-    //printf("got here \n");
+  if (wrap_around || w_rob->w_state != SENT) {
     com->com_num -= com_i;
     com->l_id += com_i;
     if (ENABLE_STAT_COUNTING)  t_stats[t_id].received_coms += com_i;
-    uint16_t imaginary_com_ptr = (uint16_t) ((zk_ctx->w_pull_ptr +
+    uint16_t imaginary_com_ptr = (uint16_t) ((zk_ctx->w_rob->pull_ptr +
                                  (com->l_id - zk_ctx->local_w_id)) % FLR_PENDING_WRITES);
     if(com_ptr != imaginary_com_ptr) {
       printf("com ptr %u/%u, com->l_id %lu, pull_lid %lu, w_pull_ptr %u, flr pending writes %d \n",
-             com_ptr, imaginary_com_ptr, com->l_id, zk_ctx->local_w_id, zk_ctx->w_pull_ptr, FLR_PENDING_WRITES);
+             com_ptr, imaginary_com_ptr, com->l_id, zk_ctx->local_w_id, zk_ctx->w_rob->pull_ptr, FLR_PENDING_WRITES);
       assert(false);
     }
     return true;
   }
   if (DEBUG_COMMITS)
     printf("Flr %d valid com %u/%u write at ptr %d with g_id %lu is ready \n",
-           t_id, com_i, com_num,  com_ptr, zk_ctx->g_id[com_ptr]);
+           t_id, com_i, com_num,  com_ptr, ((w_rob_t *) get_fifo_slot(zk_ctx->w_rob, com_ptr))->g_id);
 
   return false;
 }
@@ -99,14 +99,13 @@ static inline void fill_zk_ctx_entry(zk_ctx_t *zk_ctx,
                                      zk_prepare_t *prepare, uint8_t flr_id,
                                      uint16_t t_id)
 {
-  //w_rob_t * w_rob = (w_rob_t *) zk_ctx
-  uint32_t push_ptr = zk_ctx->w_push_ptr;
-  zk_ctx->ptr_to_op[push_ptr] = prepare;
-  zk_ctx->g_id[push_ptr] = prepare->g_id;
-  zk_ctx->flr_id[push_ptr] = prepare->flr_id;
-  zk_ctx->is_local[push_ptr] = prepare->flr_id == flr_id;
-  zk_ctx->session_id[push_ptr] = prepare->sess_id; //not useful if not local
-  zk_ctx->w_state[push_ptr] = VALID;
+  w_rob_t *w_rob = (w_rob_t *) get_fifo_push_slot(zk_ctx->w_rob);
+  w_rob->ptr_to_op = prepare;
+  w_rob->g_id = prepare->g_id;
+  w_rob->flr_id = prepare->flr_id;
+  w_rob->is_local = prepare->flr_id == flr_id;
+  w_rob->session_id = prepare->sess_id; //not useful if not local
+  w_rob->w_state = VALID;
 }
 
 /*---------------------------------------------------------------------
@@ -120,9 +119,10 @@ flr_increase_counter_if_waiting_for_commit(zk_ctx_t *zk_ctx,
                                            uint64_t committed_g_id,
                                            uint16_t t_id)
 {
+  w_rob_t * w_rob = (w_rob_t *) get_fifo_pull_slot(zk_ctx->w_rob);
   if (ENABLE_STAT_COUNTING) {
-    if ((zk_ctx->g_id[zk_ctx->w_pull_ptr] == committed_g_id + 1) &&
-        (zk_ctx->w_state[zk_ctx->w_pull_ptr] == SENT))
+    if ((w_rob->g_id == committed_g_id + 1) &&
+        (w_rob->w_state == SENT))
     t_stats[t_id].stalled_com_credit++;
   }
 }
@@ -131,15 +131,15 @@ flr_increase_counter_if_waiting_for_commit(zk_ctx_t *zk_ctx,
 static inline bool is_expected_g_id_ready(zk_ctx_t *zk_ctx,
                                           uint64_t *committed_g_id,
                                           uint16_t *update_op_i,
-                                          int pending_writes,
                                           uint16_t t_id)
 {
+  w_rob_t * w_rob = (w_rob_t *) get_fifo_pull_slot(zk_ctx->w_rob);
   if (ENABLE_GID_ORDERING) {
-    if (zk_ctx->g_id[zk_ctx->w_pull_ptr] != (*committed_g_id) + 1) {
+    if (w_rob->g_id != (*committed_g_id) + 1) {
       if (ENABLE_ASSERTIONS) {
-        if((*committed_g_id) >= zk_ctx->g_id[zk_ctx->w_pull_ptr]) {
+        if((*committed_g_id) >= w_rob->g_id) {
           my_printf(red, "Committed g_id/expected %lu/%lu \n",
-                    (*committed_g_id), zk_ctx->g_id[zk_ctx->w_pull_ptr]);
+                    (*committed_g_id), w_rob->g_id);
           assert(false);
         }
         zk_ctx->wait_for_gid_dbg_counter++;
@@ -147,15 +147,15 @@ static inline bool is_expected_g_id_ready(zk_ctx_t *zk_ctx,
         //if (*wait_for_reps_ctr % MILLION == 0)
         //  my_printf(yellow, "%s %u expecting/reading %u/%u \n",
         //            prot_to_str(protocol),
-        //            t_id, zk_ctx->g_id[zk_ctx->w_pull_ptr], committed_g_id);
+        //            t_id, zk_ctx->g_id[zk_ctx->w_rob->pull_ptr], committed_g_id);
       }
       if (ENABLE_STAT_COUNTING) t_stats[t_id].stalled_gid++;
       return false;
     }
   }
-  zk_ctx->w_state[zk_ctx->w_pull_ptr] = INVALID;
+  w_rob->w_state = INVALID;
   if (ENABLE_ASSERTIONS) zk_ctx->wait_for_gid_dbg_counter = 0;
-  MOD_INCR(zk_ctx->w_pull_ptr, pending_writes);
+  fifo_incr_pull_ptr(zk_ctx->w_rob);
   (*update_op_i)++;
   (*committed_g_id)++;
 
@@ -165,29 +165,31 @@ static inline bool is_expected_g_id_ready(zk_ctx_t *zk_ctx,
 
 static inline void zk_signal_completion_and_bookkeepfor_writes(zk_ctx_t *zk_ctx,
                                                                uint16_t update_op_i,
-                                                               uint32_t pull_ptr,
-                                                               uint32_t max_pending_writes,
+                                                               uint32_t start_pull_ptr,
                                                                protocol_t protocol,
                                                                uint16_t t_id)
 {
+  if (ENABLE_ASSERTIONS)
+    assert(start_pull_ptr ==
+           (zk_ctx->w_rob->max_size + zk_ctx->w_rob->pull_ptr - update_op_i) % zk_ctx->w_rob->max_size);
+
   for (int w_i = 0; w_i < update_op_i; ++w_i) {
+    w_rob_t * w_rob = (w_rob_t *) get_fifo_slot(zk_ctx->w_rob, start_pull_ptr);
+    if (protocol == LEADER) w_rob->acks_seen = 0;
 
-    if (protocol == LEADER) zk_ctx->acks_seen[pull_ptr] = 0;
-
-    if (zk_ctx->is_local[pull_ptr]) {
-      uint32_t sess_id = zk_ctx->session_id[pull_ptr];
-      signal_completion_to_client(zk_ctx->session_id[pull_ptr],
+    if (w_rob->is_local) {
+      uint32_t sess_id = w_rob->session_id;
+      signal_completion_to_client(w_rob->session_id,
                                   zk_ctx->index_to_req_array[sess_id], t_id);
       //if (DEBUG_WRITES)
       //  my_printf(cyan, "Found a local req freeing session %d \n", zk_ctx->session_id[w_pull_ptr]);
       zk_ctx->stalled[sess_id] = false;
       zk_ctx->all_sessions_stalled = false;
-      zk_ctx->is_local[pull_ptr] = false;
+      w_rob->is_local = false;
     }
-    MOD_INCR(pull_ptr, max_pending_writes);
-
+    MOD_INCR(start_pull_ptr, zk_ctx->w_rob->max_size);
   }
-  assert(pull_ptr == zk_ctx->w_pull_ptr);
+
 }
 
 
@@ -407,7 +409,7 @@ static inline uint16_t fill_prepare_based_on_source(context_t *ctx,
 static inline void fill_read(context_t *ctx, zk_read_t *read)
 {
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-  r_meta_t *r_meta = (r_meta_t *) get_fifo_push_slot(zk_ctx->r_meta);
+  r_rob_t *r_meta = (r_rob_t *) get_fifo_push_slot(zk_ctx->r_rob);
   read->opcode = KVS_OP_GET;
   read->key = r_meta->key;
   read->g_id = r_meta->g_id;
@@ -459,20 +461,20 @@ static inline void insert_prep_help(context_t *ctx, void* prep_ptr,
   per_qp_meta_t *qp_meta = &ctx->qp_meta[PREP_ACK_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-  uint32_t w_ptr = zk_ctx->w_push_ptr;
+  w_rob_t * w_rob = (w_rob_t *) get_fifo_push_slot(zk_ctx->w_rob);
 
   zk_prepare_t *prep = (zk_prepare_t *) prep_ptr;
   uint32_t session_id = fill_prepare_based_on_source(ctx, prep, source, (source_t) source_flag);
 
   // link it with zk_ctx to lead it later it to the KVS
-  zk_ctx->ptr_to_op[w_ptr] = prep;
+  w_rob->ptr_to_op = prep;
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
   zk_prep_mes_t *prep_mes = (zk_prep_mes_t *) get_fifo_push_slot(send_fifo);
   // If it's the first message give it an lid
   if (slot_meta->coalesce_num == 1) {
-    prep_mes->l_id = (uint64_t) (zk_ctx->local_w_id + zk_ctx->w_size);
-    fifo_set_push_backward_ptr(send_fifo, zk_ctx->w_push_ptr);
+    prep_mes->l_id = (uint64_t) (zk_ctx->local_w_id + zk_ctx->w_rob->capacity);
+    fifo_set_push_backward_ptr(send_fifo, zk_ctx->w_rob->push_ptr);
   }
 
 
@@ -482,18 +484,18 @@ static inline void insert_prep_help(context_t *ctx, void* prep_ptr,
   //                                 zk_ctx, w_ptr, ctx->t_id);
 
   // Bookkeeping
-  zk_ctx->w_state[w_ptr] = VALID;
-  zk_ctx->is_local[w_ptr] = source_flag == LOCAL_PREP;
-  zk_ctx->session_id[w_ptr] = (uint32_t) session_id;
-  MOD_INCR(zk_ctx->w_push_ptr, LEADER_PENDING_WRITES);
-  zk_ctx->w_size++;
+  w_rob->w_state = VALID;
+  w_rob->is_local = source_flag == LOCAL_PREP;
+  w_rob->session_id = (uint32_t) session_id;
+  fifo_incr_push_ptr(zk_ctx->w_rob);
+  fifo_incr_capacity(zk_ctx->w_rob);
 }
 
 static inline void insert_read_help(context_t *ctx, void *r_ptr,
                                     void *source, uint32_t source_flag)
 {
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-  r_meta_t *r_meta = (r_meta_t *) get_fifo_push_slot(zk_ctx->r_meta);
+  r_rob_t *r_meta = (r_rob_t *) get_fifo_push_slot(zk_ctx->r_rob);
   fill_read(ctx, (zk_read_t *) r_ptr);
 
   per_qp_meta_t *qp_meta = &ctx->qp_meta[R_QP_ID];
@@ -506,9 +508,9 @@ static inline void insert_read_help(context_t *ctx, void *r_ptr,
 
   if (slot_meta->coalesce_num == 1) {
     r_mes->l_id = r_meta->l_id;
-    fifo_set_push_backward_ptr(send_fifo, zk_ctx->r_meta->push_ptr);
+    fifo_set_push_backward_ptr(send_fifo, zk_ctx->r_rob->push_ptr);
   }
-  fifo_incr_push_ptr(zk_ctx->r_meta);
+  fifo_incr_push_ptr(zk_ctx->r_rob);
 }
 
 //static inline void insert_com_help(context_t *ctx, void *r_ptr,

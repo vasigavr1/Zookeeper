@@ -35,7 +35,7 @@ static inline void KVS_remote_read(zk_ctx_t *zk_ctx,
                                    uint16_t t_id)
 {
   uint32_t r_push_ptr = *r_push_ptr_;
-  r_meta_t *r_meta = (r_meta_t *) get_fifo_specific_slot(zk_ctx->r_meta, r_push_ptr);
+  r_rob_t *r_meta = (r_rob_t *) get_fifo_slot(zk_ctx->r_rob, r_push_ptr);
 
   uint32_t debug_cntr = 0;
   uint64_t tmp_lock = read_seqlock_lock_free(&kv_ptr->seqlock);
@@ -52,11 +52,11 @@ static inline void KVS_remote_read(zk_ctx_t *zk_ctx,
   assert(zk_ctx->stalled[r_meta->sess_id]);
   r_meta->state = VALID;
   r_meta->seen_larger_g_id = false;
-  r_meta->l_id = zk_ctx->local_r_id + zk_ctx->r_meta->capacity ;
+  r_meta->l_id = zk_ctx->local_r_id + zk_ctx->r_rob->capacity ;
   resp->type = KVS_GET_SUCCESS;
   MOD_INCR(r_push_ptr, FLR_PENDING_READS);
   (*r_push_ptr_) =  r_push_ptr;
-  fifo_incr_capacity(zk_ctx->r_meta);
+  fifo_incr_capacity(zk_ctx->r_rob);
 }
 
 /* The leader and follower send their local requests to this, reads get served
@@ -86,7 +86,7 @@ static inline void zk_KVS_batch_op_trace(zk_ctx_t *zk_ctx, uint16_t op_num,
   }
   KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
 
-  uint32_t r_push_ptr = zk_ctx->protocol == FOLLOWER ? zk_ctx->r_meta->push_ptr : 0;
+  uint32_t r_push_ptr = zk_ctx->protocol == FOLLOWER ? zk_ctx->r_rob->push_ptr : 0;
   // the following variables used to validate atomicity between a lock-free read of an object
   for(op_i = 0; op_i < op_num; op_i++) {
     if (ENABLE_ASSERTIONS && kv_ptr[op_i] == NULL) assert(false);
@@ -119,7 +119,7 @@ static inline void zk_KVS_batch_op_trace(zk_ctx_t *zk_ctx, uint16_t op_num,
 }
 
 ///* The leader and follower send the writes to be committed with this function*/
-static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_prepare_t **preps,
+static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_ctx_t *zk_ctx,
                                            uint32_t pull_ptr, uint32_t max_op_size,
                                            bool zero_ops, uint16_t t_id)
 {
@@ -127,7 +127,7 @@ static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_prepare_t **preps
   if (DISABLE_UPDATING_KVS) return;
   uint16_t op_i;  /* op_i is batch index */
   if (ENABLE_ASSERTIONS) {
-    assert(preps != NULL);
+    //assert(preps != NULL);
     assert(op_num > 0 && op_num <= ZK_UPDATE_BATCH);
   }
 
@@ -137,13 +137,16 @@ static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_prepare_t **preps
   mica_op_t *kv_ptr[ZK_UPDATE_BATCH];	/* Ptr to KV item in log */
 
   for(op_i = 0; op_i < op_num; op_i++) {
-    zk_prepare_t *op = preps[(pull_ptr + op_i) % max_op_size];
+    w_rob_t *w_rob = (w_rob_t *) get_fifo_slot(zk_ctx->w_rob, (pull_ptr + op_i) % max_op_size);
+    zk_prepare_t *op = w_rob->ptr_to_op; //preps[(pull_ptr + op_i) % max_op_size];
     KVS_locate_one_bucket(op_i, bkt, &op->key, bkt_ptr, tag, kv_ptr, KVS);
   }
   KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
 
   for(op_i = 0; op_i < op_num; op_i++) {
-    zk_prepare_t *op = preps[(pull_ptr + op_i) % max_op_size];
+    w_rob_t *w_rob = (w_rob_t *) get_fifo_slot(zk_ctx->w_rob, (pull_ptr + op_i) % max_op_size);
+    zk_prepare_t *op = w_rob->ptr_to_op;
+    //zk_prepare_t *op = preps[(pull_ptr + op_i) % max_op_size];
     if (ENABLE_ASSERTIONS && kv_ptr[op_i] == NULL) {
       my_printf(red, "Kptr  is null %u\n", op_i);
       cust_print_key("Op", &op->key);
