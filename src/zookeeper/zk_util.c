@@ -163,7 +163,7 @@ void zk_ldr_qp_meta_init(per_qp_meta_t *qp_meta)
                      FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_W_BUF_SLOTS,
                      LDR_W_RECV_SIZE, LDR_COM_SEND_SIZE, ENABLE_MULTICAST, false,
                      COM_MCAST_QP, LEADER_MACHINE, COMMIT_FIFO_SIZE,
-                     COMMIT_CREDITS, 0,
+                     COMMIT_CREDITS, LDR_COM_SEND_SIZE,
                      "send commits", "recv writes");
   ///
   create_per_qp_meta(&qp_meta[FC_QP_ID], 0, LDR_MAX_CREDIT_RECV, RECV_CREDITS, RECV_REPLY,
@@ -212,7 +212,7 @@ void zk_flr_qp_meta_init(per_qp_meta_t *qp_meta)
 void zk_ldr_qp_meta_mfs(per_qp_meta_t *qp_meta)
 {
   ctx_qp_meta_mfs(&qp_meta[PREP_ACK_QP_ID], ack_handler, send_prepares_helper, NULL, insert_prep_help);
-  ctx_qp_meta_mfs(&qp_meta[COMMIT_W_QP_ID], write_handler, NULL, NULL, NULL);
+  ctx_qp_meta_mfs(&qp_meta[COMMIT_W_QP_ID], write_handler, send_commits_helper, NULL, NULL);
   ctx_qp_meta_mfs(&qp_meta[R_QP_ID], r_handler, send_r_reps_helper, zk_KVS_batch_op_reads, insert_r_rep_help);
 }
 
@@ -227,9 +227,10 @@ void zk_flr_qp_meta_mfs(per_qp_meta_t *qp_meta)
 
 void zk_init_ldr_send_fifos(context_t *ctx)
 {
-  zk_com_mes_t *commits = (zk_com_mes_t *) ctx->qp_meta[COMMIT_W_QP_ID].send_fifo->fifo;
+  fifo_t *send_fifo = ctx->qp_meta[COMMIT_W_QP_ID].send_fifo;
+  zk_com_mes_t *commits = (zk_com_mes_t *) send_fifo->fifo;
 
-  for (int i = 0; i < COMMIT_FIFO_SIZE; i++) {
+  for (uint32_t i = 0; i < COMMIT_FIFO_SIZE; i++) {
     commits[i].opcode = KVS_OP_PUT;
   }
 
@@ -307,8 +308,10 @@ zk_ctx_t *set_up_zk_ctx(context_t *ctx, protocol_t protocol)
   uint32_t size = protocol == LEADER ? LEADER_PENDING_WRITES : FLR_PENDING_WRITES;
   zk_ctx->protocol = protocol;
 
-  zk_ctx->prep_fifo = ctx->qp_meta[PREP_ACK_QP_ID].send_fifo;
-  zk_ctx->w_fifo = ctx->qp_meta[COMMIT_W_QP_ID].send_fifo;
+  zk_ctx->w_rob = fifo_constructor(size, sizeof(w_rob_t), false, 0, 1);
+
+  //zk_ctx->prep_fifo = ctx->qp_meta[PREP_ACK_QP_ID].send_fifo;
+  //zk_ctx->w_fifo = ctx->qp_meta[COMMIT_W_QP_ID].send_fifo;
 
   zk_ctx->g_id = (uint64_t *) malloc(size * sizeof(uint64_t));
   zk_ctx->w_state = (enum op_state *) malloc(size * sizeof(enum op_state));
@@ -319,7 +322,7 @@ zk_ctx_t *set_up_zk_ctx(context_t *ctx, protocol_t protocol)
   zk_ctx->flr_id = (uint8_t *) malloc(size * sizeof(uint8_t));
   zk_ctx->is_local = (bool *) malloc(size * sizeof(bool));
   zk_ctx->stalled = (bool *) malloc(SESSIONS_PER_THREAD * sizeof(bool));
-  zk_ctx->ptrs_to_ops = (zk_prepare_t **) malloc(size * sizeof(zk_prepare_t *));
+  zk_ctx->ptr_to_op = (zk_prepare_t **) malloc(size * sizeof(zk_prepare_t *));
   //if (protocol == FOLLOWER) init_fifo(&(zk_ctx->w_fifo), W_FIFO_SIZE * sizeof(zk_w_mes_t), 1);
   memset(zk_ctx->g_id, 0, size * sizeof(uint64_t));
   //zk_ctx->prep_fifo = (zk_prep_fifo_t *) calloc(1, sizeof(zk_prep_fifo_t));
@@ -339,9 +342,12 @@ zk_ctx_t *set_up_zk_ctx(context_t *ctx, protocol_t protocol)
     zk_ctx->ptrs_to_r->ptr_to_ops = malloc(LDR_MAX_INCOMING_R * sizeof(zk_read_t*));
     zk_ctx->ptrs_to_r->ptr_to_r_mes = malloc(LDR_MAX_INCOMING_R * sizeof(zk_r_mes_t*));
     zk_ctx->ptrs_to_r->coalesce_r_rep = malloc(LDR_MAX_INCOMING_R * sizeof(bool));
+
   }
   else { // PROTOCOL == FOLLOWER
     zk_ctx->ack = (zk_ack_mes_t *) calloc(1, sizeof(zk_ack_mes_t));
+    zk_ctx->ack->opcode = KVS_OP_ACK;
+    zk_ctx->ack->follower_id = ctx->m_id;
     zk_ctx->p_acks = (p_acks_t *) calloc(1, sizeof(p_acks_t));
     zk_ctx->r_meta = fifo_constructor(FLR_PENDING_READS, sizeof(r_meta_t), false, 0, 1);
   }

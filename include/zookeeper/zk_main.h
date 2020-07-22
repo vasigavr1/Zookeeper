@@ -94,13 +94,13 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 
 // -- COMMITS-----
 
-#define COM_SIZE 8 // gid(8)
-#define COM_MES_HEADER_SIZE 4 // opcode + coalesce num
+//#define COM_SIZE 8 // gid(8)
+//#define COM_MES_HEADER_SIZE 4 // opcode + coalesce num
 //#define MAX_COM_COALESCE 2
-#define LDR_COM_SEND_SIZE (COM_SIZE + COM_MES_HEADER_SIZE)
+#define LDR_COM_SEND_SIZE (13) //l_id + com_mes_num + opcode
 #define FLR_COM_RECV_SIZE (GRH_SIZE + LDR_COM_SEND_SIZE)
 #define COM_ENABLE_INLINING ((LDR_COM_SEND_SIZE < MAXIMUM_INLINE_SIZE) ? 1: 0)
-#define COMMIT_FIFO_SIZE ((COM_ENABLE_INLINING == 1) ? (COMMIT_CREDITS) : (COM_BCAST_SS_BATCH))
+#define COMMIT_FIFO_SIZE 1 //((COM_ENABLE_INLINING == 1) ? (COMMIT_CREDITS) : (COM_BCAST_SS_BATCH))
 
 //---WRITES---
 #define W_MES_HEADER 1
@@ -329,8 +329,8 @@ typedef struct zk_ack_message_ud_req {
 // The format of a commit message
 typedef struct com_message {
   uint64_t l_id;
-  uint16_t com_num;
-	uint16_t opcode;
+  uint32_t com_num;
+	uint8_t opcode;
 } __attribute__((__packed__)) zk_com_mes_t;
 
 // commit message plus the grh
@@ -458,6 +458,8 @@ typedef struct read_meta {
 } r_meta_t ;
 
 
+
+
 // struct for the follower to keep track of the acks it has sent
 typedef struct pending_acks {
   uint32_t slots_ahead;
@@ -491,12 +493,25 @@ typedef struct zk_resp {
 } zk_resp_t;
 
 
+typedef struct w_rob {
+	uint32_t session_id;
+	uint64_t g_id;
+	enum op_state w_state;
+	uint8_t flr_id;
+	uint8_t acks_seen;
+	uint32_t index_to_req_array;
+	bool is_local;
+	zk_prepare_t *ptrs_to_op;
+
+} w_rob_t;
+
 // A data structute that keeps track of the outstanding writes
 typedef struct zk_ctx {
 	uint64_t *g_id;
-	fifo_t *prep_fifo;
-  fifo_t *w_fifo;
+
   fifo_t *r_meta;
+	fifo_t *w_rob;
+
 
 	trace_t *trace;
 	uint32_t trace_iter;
@@ -505,7 +520,7 @@ typedef struct zk_ctx {
   zk_trace_op_t *ops;
   zk_resp_t *resp;
 
-	zk_prepare_t **ptrs_to_ops;
+	zk_prepare_t **ptr_to_op;
 	ptrs_to_r_t *ptrs_to_r;
 	uint64_t local_w_id;
   uint64_t local_r_id;

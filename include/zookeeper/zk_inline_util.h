@@ -121,8 +121,8 @@ static inline void send_acks_to_ldr(context_t *ctx)
   if (p_acks->acks_to_send == 0) return;
   struct ibv_send_wr *bad_send_wr;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[PREP_ACK_QP_ID];
-  ack->opcode = KVS_OP_ACK;
-  ack->follower_id = ctx->m_id;
+  //ack->opcode = KVS_OP_ACK;
+  //ack->follower_id = ctx->m_id;
   ack->ack_num = (uint16_t) p_acks->acks_to_send;
   uint64_t l_id_to_send = zk_ctx->local_w_id + p_acks->slots_ahead;
   for (uint32_t i = 0; i < ack->ack_num; i++) {
@@ -202,10 +202,10 @@ static inline void send_writes_helper(context_t *ctx)
     checks_and_stats_when_sending_unicasts(ctx, COMMIT_W_QP_ID, coalesce_num);
   zk_checks_and_print_when_forging_unicast(ctx, COMMIT_W_QP_ID);
 
+
   add_to_the_mirrored_buffer(qp_meta->mirror_remote_recv_fifo,
                              (uint8_t) coalesce_num, 1,
                              LEADER_W_BUF_SLOTS, zk_ctx->q_info);
-
 }
 
 
@@ -256,7 +256,7 @@ static inline void send_unicasts(context_t *ctx,
     if (qp_meta->mfs->send_helper != NULL)
       qp_meta->mfs->send_helper(ctx);
 
-    forge_unicast_wr(ctx, qp_id, qp_meta->send_string, mes_i);
+    forge_unicast_wr(ctx, qp_id, mes_i);
 
     fifo_send_from_pull_slot(send_fifo);
 
@@ -267,9 +267,8 @@ static inline void send_unicasts(context_t *ctx,
   }
 
   if (mes_i > 0) {
-    if (qp_id != COMMIT_W_QP_ID) {
+    if (qp_meta->recv_wr_num > qp_meta->recv_info->posted_recvs)
       post_recvs_with_recv_info(qp_meta->recv_info, qp_meta->recv_wr_num - qp_meta->recv_info->posted_recvs);
-    }
     //printf("W_i %u, length %u, address %p/ %p \n", mes_i, qp_meta->send_wr[0].sg_list->length,
     //       (void *)qp_meta->send_wr[0].sg_list->addr, send_fifo->fifo);
     qp_meta->send_wr[mes_i - 1].next = NULL;
@@ -312,13 +311,50 @@ static inline void flr_propagate_updates(context_t *ctx)
 
     zk_ctx->p_acks->slots_ahead -= update_op_i;
     zk_ctx->w_size -= update_op_i;
-    zk_KVS_batch_op_updates((uint16_t) update_op_i, zk_ctx->ptrs_to_ops,  starting_pull_ptr,
+    zk_KVS_batch_op_updates((uint16_t) update_op_i, zk_ctx->ptr_to_op,  starting_pull_ptr,
                             FLR_PENDING_WRITES, true, ctx->t_id);
     if (ENABLE_GIDS)
       atomic_store_explicit(&committed_global_w_id, committed_g_id, memory_order_relaxed);
     zk_signal_completion_and_bookkeepfor_writes(zk_ctx, update_op_i, starting_pull_ptr,
                                                 FLR_PENDING_WRITES, FOLLOWER, ctx->t_id);
   }
+}
+
+
+// Leader propagates Updates that have seen all acks to the KVS
+static inline void ldr_propagate_updates(context_t *ctx)
+{
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+//  printf("Ldr %d propagating updates \n", t_id);
+  uint16_t update_op_i = 0;
+  // remember the starting point to use it when writing the KVS
+  uint32_t starting_pull_ptr = zk_ctx->w_pull_ptr;
+  // Read the latest committed g_id
+  uint64_t committed_g_id = atomic_load_explicit(&committed_global_w_id, memory_order_relaxed);
+  while(zk_ctx->w_state[zk_ctx->w_pull_ptr] == READY) {
+    // the commit prep_message is full: that may be too restricting,
+    // but it does not affect performance or correctness
+    //if (com_fifo->capacity == COMMIT_FIFO_SIZE) break;
+    if (!is_expected_g_id_ready(zk_ctx, &committed_g_id, &update_op_i,
+                                LEADER_PENDING_WRITES, ctx->t_id))
+      break;
+  }
+  if (update_op_i > 0) {
+
+    zk_insert_commit(ctx, update_op_i);
+    zk_ctx->local_w_id += update_op_i; // advance the local_w_id
+
+    if (ENABLE_ASSERTIONS) assert(zk_ctx->w_size >= update_op_i);
+    zk_ctx->w_size -= update_op_i;
+    zk_KVS_batch_op_updates((uint16_t) update_op_i, zk_ctx->ptr_to_op, starting_pull_ptr,
+                            LEADER_PENDING_WRITES, false, ctx->t_id);
+
+    atomic_store_explicit(&committed_global_w_id, committed_g_id, memory_order_relaxed);
+    zk_signal_completion_and_bookkeepfor_writes(zk_ctx, update_op_i, starting_pull_ptr,
+                                                LEADER_PENDING_WRITES, LEADER, ctx->t_id);
+  }
+
+  check_ldr_p_states(zk_ctx, ctx->t_id);
 }
 
 
@@ -347,7 +383,7 @@ static inline void zk_get_g_ids(context_t *ctx)
                                       % LEADER_PENDING_WRITES));
     uint32_t unordered_ptr = zk_ctx->unordered_ptr;
 		zk_ctx->g_id[unordered_ptr] = id + i;
-		zk_prepare_t *prep = zk_ctx->ptrs_to_ops[unordered_ptr];
+		zk_prepare_t *prep = zk_ctx->ptr_to_op[unordered_ptr];
 		prep->g_id = zk_ctx->g_id[unordered_ptr];
     MOD_INCR(zk_ctx->unordered_ptr, LEADER_PENDING_WRITES);
 	}
@@ -422,42 +458,11 @@ static inline void zk_apply_acks(uint16_t ack_num, uint32_t ack_ptr,
 
 
 
-// Leader propagates Updates that have seen all acks to the KVS
-static inline void ldr_propagate_updates(context_t *ctx)
-{
-  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-//  printf("Ldr %d propagating updates \n", t_id);
-	uint16_t update_op_i = 0;
-  // remember the starting point to use it when writing the KVS
-	uint32_t starting_pull_ptr = zk_ctx->w_pull_ptr;
-  fifo_t *com_fifo = ctx->qp_meta[COMMIT_W_QP_ID].send_fifo;
-  // Read the latest committed g_id
-	uint64_t committed_g_id = atomic_load_explicit(&committed_global_w_id, memory_order_relaxed);
-	while(zk_ctx->w_state[zk_ctx->w_pull_ptr] == READY) {
-    // the commit prep_message is full: that may be too restricting,
-    // but it does not affect performance or correctness
-		if (com_fifo->capacity == COMMIT_FIFO_SIZE) break;
-    if (!is_expected_g_id_ready(zk_ctx, &committed_g_id, &update_op_i,
-                                LEADER_PENDING_WRITES, ctx->t_id))
-      break;
- 	}
-	if (update_op_i > 0) {
-    zk_create_commit_message(com_fifo, zk_ctx->local_w_id, update_op_i);
-		zk_ctx->local_w_id += update_op_i; // advance the local_w_id
 
-    if (ENABLE_ASSERTIONS) assert(zk_ctx->w_size >= update_op_i);
-    zk_ctx->w_size -= update_op_i;
-    zk_KVS_batch_op_updates((uint16_t) update_op_i, zk_ctx->ptrs_to_ops, starting_pull_ptr,
-                            LEADER_PENDING_WRITES, false, ctx->t_id);
 
-		atomic_store_explicit(&committed_global_w_id, committed_g_id, memory_order_relaxed);
-    zk_signal_completion_and_bookkeepfor_writes(zk_ctx, update_op_i, starting_pull_ptr,
-                                                LEADER_PENDING_WRITES, LEADER, ctx->t_id);
-	}
-
-  check_ldr_p_states(zk_ctx, ctx->t_id);
-}
-
+/* ---------------------------------------------------------------------------
+//------------------------------POLL HANDLERS -----------------------------
+//---------------------------------------------------------------------------*/
 
 
 static inline bool ack_handler(context_t *ctx)
@@ -506,12 +511,13 @@ static inline bool write_handler(context_t *ctx)
   for (uint16_t i = 0; i < w_num; i++) {
     zk_write_t *write = &w_mes->write[i];
     if (ENABLE_ASSERTIONS) if(write->opcode != KVS_OP_PUT)
-        my_printf(red, "Opcode %u, i %u/%u \n",write->opcode, i, w_num);
+        my_printf(red, "Opcode %u, i %u/%u \n", write->opcode, i, w_num);
     if (DEBUG_WRITES)
       printf("Poll for writes passes session id %u \n", write->sess_id);
-    insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1, false, (void *) write, REMOTE_WRITE);
+    insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1,
+               false, (void *) write, REMOTE_WRITE);
     //ldr_insert_prep(ctx, zk_ctx, (void *) write, false);
-    write->opcode = 0;
+    write->opcode = 3;
   }
   if (ENABLE_STAT_COUNTING) {
     t_stats[ctx->t_id].received_writes += w_num;
@@ -519,8 +525,6 @@ static inline bool write_handler(context_t *ctx)
   }
   return true;
 }
-
-
 
 static inline bool r_rep_handler(context_t *ctx)
 {
@@ -660,11 +664,11 @@ static inline bool commit_handler(context_t *ctx)
     ((zk_ctx->w_pull_ptr + (l_id - pull_lid)) % FLR_PENDING_WRITES);
   /// loop through each commit
   for (uint16_t com_i = 0; com_i < com_num; com_i++) {
-    if (zk_write_not_ready(com, com_ptr, com_i, com_num, zk_ctx, ctx->t_id))
+    if (zk_write_not_ready(com, com_ptr, com_i, com_num, zk_ctx, ctx->t_id)) {
       return false;
+    }
 
     assert(l_id + com_i - pull_lid < FLR_PENDING_WRITES);
-
     zk_ctx->w_state[com_ptr] = READY;
     flr_increases_write_credits(ctx, zk_ctx, com_ptr, qp_meta->mirror_remote_recv_fifo);
     MOD_INCR(com_ptr, FLR_PENDING_WRITES);
@@ -708,6 +712,7 @@ static inline void poll_incoming_messages(context_t *ctx,
     if (!qp_meta->mfs->recv_handler(ctx)) break;
 
     fifo_incr_pull_ptr(recv_fifo);
+    //printf("Qp %u pull_ptr %u/%u \n", qp_id, recv_fifo->pull_ptr, recv_fifo->max_size);
     zk_ctx->polled_messages++;
 	}
   qp_meta->completed_but_not_polled = completed_messages - zk_ctx->polled_messages;
@@ -728,54 +733,15 @@ static inline void poll_incoming_messages(context_t *ctx,
 //---------------------------------------------------------------------------*/
 static inline void send_commits_helper(context_t *ctx)
 {
-  per_qp_meta_t *cred_qp_meta = &ctx->qp_meta[FC_QP_ID];
-}
-
-// Leader broadcasts commits
-static inline void broadcast_commits(context_t *ctx, uint16_t qp_id)
-{
-  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
-  per_qp_meta_t *cred_qp_meta = &ctx->qp_meta[FC_QP_ID];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
-  if (send_fifo->capacity == 0) return;
-  uint8_t vc = COMM_VC;
-  uint16_t  br_i = 0, credit_recv_counter = 0, mes_sent = 0, available_credits = 0;
+  zk_com_mes_t *com_mes = (zk_com_mes_t *) get_fifo_pull_slot(send_fifo);
 
-  if (!check_bcast_credits(qp_meta->credits, zk_ctx->q_info, &qp_meta->time_out_cnt,
-                           &available_credits, 1,  ctx->t_id)) {
-    if (ENABLE_STAT_COUNTING) t_stats[ctx->t_id].stalled_com_credit++;
-    return;
-  }
-  zk_com_mes_t *send_buffer = (zk_com_mes_t *) send_fifo->fifo;
-  while (send_fifo->capacity > 0 && mes_sent < available_credits) {
-		zk_com_mes_t *com_mes = &send_buffer[send_fifo->pull_ptr];
-    // Create the broadcast messages
-    forge_commit_wrs(ctx, com_mes, zk_ctx->q_info, br_i);
-    post_recvs_with_recv_info(cred_qp_meta->recv_info,
-                              cred_qp_meta->recv_wr_num - cred_qp_meta->recv_info->posted_recvs);
-		send_fifo->capacity--;
-		MOD_INCR(send_fifo->pull_ptr, send_fifo->max_size);
-    br_i++;
-    mes_sent++;
-    zk_checks_and_stats_on_bcasting_commits(send_fifo, com_mes, br_i, ctx->t_id);
-    //if (qp_meta->sent_tx % FLR_CREDITS_IN_MESSAGE == 0) credit_recv_counter++;
-    if (br_i == MAX_BCAST_BATCH) {
+  if (DEBUG_COMMITS)
+    my_printf(green, "Wrkr %u, Broadcasting commit %u, lid %lu, com_num %u \n",
+              ctx->t_id, com_mes->opcode, com_mes->l_id, com_mes->com_num);
 
-      post_quorum_broadasts_and_recvs(qp_meta->recv_info, qp_meta->recv_wr_num - qp_meta->recv_info->posted_recvs,
-                                      zk_ctx->q_info, br_i, qp_meta->sent_tx, qp_meta->send_wr,
-                                      qp_meta->send_qp, qp_meta->enable_inlining);
-      br_i = 0;
-    }
-  }
-	if (br_i > 0) {
-    //post_recvs_with_recv_info(cred_qp_meta->recv_info, cred_qp_meta->recv_wr_num - cred_qp_meta->recv_info->posted_recvs);
-    post_quorum_broadasts_and_recvs(qp_meta->recv_info, qp_meta->recv_wr_num - qp_meta->recv_info->posted_recvs,
-                                    zk_ctx->q_info, br_i, qp_meta->sent_tx, qp_meta->send_wr,
-                                    qp_meta->send_qp, qp_meta->enable_inlining);
-	}
-	if (ENABLE_ASSERTIONS) assert(qp_meta->recv_info->posted_recvs <= LDR_MAX_RECV_W_WRS);
-  if (mes_sent > 0) decrease_credits(qp_meta->credits, zk_ctx->q_info, mes_sent);
+  zk_checks_and_stats_on_bcasting_commits(send_fifo, com_mes, ctx->t_id);
 }
 
 
@@ -817,7 +783,7 @@ static inline void send_prepares_helper(context_t *ctx)
   add_to_the_mirrored_buffer(qp_meta->mirror_remote_recv_fifo,
                              coalesce_num, FOLLOWER_MACHINE_NUM,
                              FLR_PREP_BUF_SLOTS, zk_ctx->q_info);
-  zk_checks_and_stats_on_bcasting_prepares(zk_ctx, coalesce_num,
+  zk_checks_and_stats_on_bcasting_prepares(send_fifo, coalesce_num,
                                            &qp_meta->outstanding_messages, ctx->t_id);
 }
 
@@ -909,7 +875,8 @@ static inline void ldr_main_loop(context_t *ctx)
   ldr_propagate_updates(ctx);
 
   ldr_poll_credits(ctx);
-  broadcast_commits(ctx, COMMIT_W_QP_ID);
+
+  send_broadcasts(ctx, COMMIT_W_QP_ID);
 
   // Get a new batch from the trace, pass it through the cache and create
   // the appropriate prepare messages
@@ -926,6 +893,8 @@ static inline void ldr_main_loop(context_t *ctx)
   poll_incoming_messages(ctx, R_QP_ID);
 
   send_unicasts(ctx, R_QP_ID);
+
+
 
 }
 

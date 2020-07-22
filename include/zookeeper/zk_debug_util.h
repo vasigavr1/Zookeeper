@@ -97,7 +97,15 @@ static inline void ldr_check_debug_cntrs(context_t *ctx)
       zk_print_error_message(qp_meta->send_string, LEADER, zk_ctx, ctx->t_id);
       print_ldr_stats(ctx->t_id);
     }
+  }
 
+  zk_prep_mes_t *preps = (zk_prep_mes_t *) ctx->qp_meta[PREP_ACK_QP_ID].send_fifo->fifo;
+  for (int i = 0; i < PREP_FIFO_SIZE; i++) {
+    assert(preps[i].opcode == KVS_OP_PUT);
+    for (uint16_t j = 0; j < MAX_PREP_COALESCE; j++) {
+      assert(preps[i].prepare[j].opcode == KVS_OP_PUT);
+      assert(preps[i].prepare[j].val_len == VALUE_SIZE >> SHIFT_BITS);
+    }
   }
 }
 
@@ -363,13 +371,43 @@ static inline void zk_checks_after_polling_prepares(zk_ctx_t *zk_ctx,
 //------------------------------ BROADCASTS -----------------------------
 //---------------------------------------------------------------------------*/
 
-static inline void zk_checks_and_stats_on_bcasting_prepares(zk_ctx_t *zk_ctx,
+
+
+static inline void zk_ckecks_when_creating_commits(context_t *ctx,
+                                                   uint16_t update_op_i)
+{
+  if (!ENABLE_ASSERTIONS) return;
+
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+  fifo_t *send_fifo = ctx->qp_meta[COMMIT_W_QP_ID].send_fifo;
+  zk_com_mes_t *commit = (zk_com_mes_t *) get_fifo_push_prev_slot(send_fifo);
+  slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
+
+  assert(update_op_i > 0);
+  assert(commit->opcode == KVS_OP_PUT);
+  assert(send_fifo->mes_header == LDR_COM_SEND_SIZE);
+  assert(slot_meta->byte_size == LDR_COM_SEND_SIZE);
+
+  if (send_fifo->capacity > 0) {
+    if (ENABLE_ASSERTIONS) {
+      assert(commit->l_id == zk_ctx->local_w_id);
+      assert(commit->com_num > 0);
+    }
+    if (ENABLE_ASSERTIONS) assert(commit->com_num + update_op_i <= MAX_LIDS_IN_A_COMMIT);
+  }
+
+
+
+
+}
+
+static inline void zk_checks_and_stats_on_bcasting_prepares(fifo_t *send_fifo,
                                                             uint8_t coalesce_num,
                                                             uint32_t *outstanding_prepares,
                                                             uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
-    assert(zk_ctx->prep_fifo->net_capacity >= coalesce_num);
+    assert(send_fifo->net_capacity >= coalesce_num);
     (*outstanding_prepares) +=
       coalesce_num;
   }
@@ -381,17 +419,18 @@ static inline void zk_checks_and_stats_on_bcasting_prepares(zk_ctx_t *zk_ctx,
 }
 
 
-static inline void zk_checks_and_stats_on_bcasting_commits(fifo_t *com_fifo,
+static inline void zk_checks_and_stats_on_bcasting_commits(fifo_t *send_fifo,
                                                            zk_com_mes_t *com_mes,
-                                                           uint16_t  br_i,
                                                            uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
-    assert(br_i <= COMMIT_CREDITS);
-    assert(com_fifo != NULL);
-    if (com_fifo->capacity > COMMIT_FIFO_SIZE)
-      printf("com fifo capacity %u/%d \n", com_fifo->capacity, COMMIT_FIFO_SIZE);
-    assert(com_fifo->capacity <= COMMIT_FIFO_SIZE);
+    assert(com_mes->com_num == get_fifo_slot_meta_pull(send_fifo)->coalesce_num);
+    assert(send_fifo->net_capacity >= com_mes->com_num);
+
+    assert(send_fifo != NULL);
+    if (send_fifo->capacity > COMMIT_FIFO_SIZE)
+      printf("com fifo capacity %u/%d \n", send_fifo->capacity, COMMIT_FIFO_SIZE);
+    assert(send_fifo->capacity <= COMMIT_FIFO_SIZE);
     assert(com_mes->com_num > 0 && com_mes->com_num <= MAX_LIDS_IN_A_COMMIT);
   }
   if (ENABLE_STAT_COUNTING) {

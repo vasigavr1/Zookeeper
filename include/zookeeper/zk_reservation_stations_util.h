@@ -41,10 +41,11 @@ static inline uint32_t get_resp_size_from_opcode(uint8_t opcode)
 static inline void flr_increases_write_credits(context_t *ctx,
                                                zk_ctx_t *zk_ctx,
                                                uint16_t com_ptr,
-                                               struct fifo *remote_w_buf)
+                                               fifo_t *remote_w_buf)
 {
   per_qp_meta_t *qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
   if (zk_ctx->flr_id[com_ptr] == ctx->m_id) {
+    assert(qp_meta->mirror_remote_recv_fifo == remote_w_buf);
     (*qp_meta->credits) += remove_from_the_mirrored_buffer(remote_w_buf,
                                                   1, ctx->t_id, 0,
                                                   LEADER_W_BUF_SLOTS);
@@ -61,9 +62,7 @@ static inline bool zk_write_not_ready(zk_com_mes_t *com,
                                       zk_ctx_t *zk_ctx,
                                       uint16_t t_id)
 {
-  if (DEBUG_COMMITS)
-    printf("Flr %d valid com %u/%u write at ptr %d with g_id %lu is ready \n",
-           t_id, com_i, com_num,  com_ptr, zk_ctx->g_id[com_ptr]);
+
   // it may be that a commit refers to a subset of writes that
   // we have seen and acked, and a subset not yet seen or acked,
   // We need to commit the seen subset to avoid a deadlock
@@ -85,6 +84,10 @@ static inline bool zk_write_not_ready(zk_com_mes_t *com,
     }
     return true;
   }
+  if (DEBUG_COMMITS)
+    printf("Flr %d valid com %u/%u write at ptr %d with g_id %lu is ready \n",
+           t_id, com_i, com_num,  com_ptr, zk_ctx->g_id[com_ptr]);
+
   return false;
 }
 
@@ -96,8 +99,9 @@ static inline void fill_zk_ctx_entry(zk_ctx_t *zk_ctx,
                                      zk_prepare_t *prepare, uint8_t flr_id,
                                      uint16_t t_id)
 {
+  //w_rob_t * w_rob = (w_rob_t *) zk_ctx
   uint32_t push_ptr = zk_ctx->w_push_ptr;
-  zk_ctx->ptrs_to_ops[push_ptr] = prepare;
+  zk_ctx->ptr_to_op[push_ptr] = prepare;
   zk_ctx->g_id[push_ptr] = prepare->g_id;
   zk_ctx->flr_id[push_ptr] = prepare->flr_id;
   zk_ctx->is_local[push_ptr] = prepare->flr_id == flr_id;
@@ -224,8 +228,8 @@ static inline void ldr_poll_credits(context_t *ctx)
       credits[cred_qp_meta->recv_wc[j].imm_data]+= FLR_CREDITS_IN_MESSAGE;
     }
 
-    //post_recvs_with_recv_info(cred_qp_meta->recv_info,
-    //                          cred_qp_meta->recv_wr_num - cred_qp_meta->recv_info->posted_recvs);
+    post_recvs_with_recv_info(cred_qp_meta->recv_info,
+                              credits_found);
 
   }
   else if(unlikely(credits_found < 0)) {
@@ -278,7 +282,6 @@ static inline void forge_bcast_wr(context_t *ctx,
 //
 static inline void forge_unicast_wr(context_t *ctx,
                                     uint16_t qp_id,
-                                    const char *mes,
                                     uint16_t mes_i)
 {
   per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
@@ -298,7 +301,7 @@ static inline void forge_unicast_wr(context_t *ctx,
 
   selective_signaling_for_unicast(&qp_meta->sent_tx, qp_meta->ss_batch, send_wr,
                                   mes_i, qp_meta->send_cq, qp_meta->enable_inlining,
-                                  mes, ctx->t_id);
+                                  qp_meta->send_string, ctx->t_id);
   // Have the last message point to the current message
   if (mes_i > 0) send_wr[mes_i - 1].next = &send_wr[mes_i];
 
@@ -307,40 +310,26 @@ static inline void forge_unicast_wr(context_t *ctx,
 
 
 // Add the acked gid to the appropriate commit message
-static inline void zk_create_commit_message(fifo_t *com_fifo, uint64_t l_id, uint16_t update_op_i)
+static inline void zk_insert_commit(context_t *ctx,
+                                    uint16_t update_op_i)
 {
-  //l_id refers the oldest write to commit (writes go from l_id to l_id + update_op_i)
-  uint16_t com_mes_i = (uint16_t) com_fifo->push_ptr;
-  if (ENABLE_ASSERTIONS) {
-    assert(com_fifo->max_size == COMMIT_FIFO_SIZE);
-    assert(com_fifo->capacity <= com_fifo->max_size);
-    assert(com_mes_i < com_fifo->max_size);
-  }
-  uint16_t last_com_mes_i;
-  zk_com_mes_t *commit_messages = (zk_com_mes_t *) com_fifo->fifo;
+  zk_ckecks_when_creating_commits(ctx, update_op_i);
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+  fifo_t *send_fifo = ctx->qp_meta[COMMIT_W_QP_ID].send_fifo;
+  zk_com_mes_t *commit = (zk_com_mes_t *) get_fifo_push_prev_slot(send_fifo);
 
-  // see if the new batch can fit with the previous one -- no reason why it should not
-  if (com_fifo->capacity > 0) {
-    last_com_mes_i = (uint16_t) ((com_fifo->max_size + com_mes_i - 1) % com_fifo->max_size);
-    zk_com_mes_t *last_commit = &commit_messages[last_com_mes_i];
-    uint64_t last_l_id = last_commit->l_id;
-    last_l_id += last_commit->com_num;
-    if (last_l_id == l_id) {
-      if (last_commit->com_num + update_op_i <= MAX_LIDS_IN_A_COMMIT) {
-        last_commit->com_num += update_op_i;
-        return;
-      }
-    }
+  if (send_fifo->capacity > 0)
+    commit->com_num += update_op_i;
+  else { //otherwise push a new commit
+    commit->l_id = zk_ctx->local_w_id;
+    commit->com_num = update_op_i;
+    fifo_incr_capacity(send_fifo);
   }
-  //otherwise push a new commit
-  zk_com_mes_t *new_commit = &commit_messages[com_mes_i];
-  new_commit->l_id = l_id;
-  new_commit->com_num = update_op_i;
-  com_fifo->capacity++;
-  MOD_INCR(com_fifo->push_ptr, com_fifo->max_size);
-  if (ENABLE_ASSERTIONS) {
-    assert(com_fifo->capacity <= com_fifo->max_size );
-  }
+  send_fifo->net_capacity += update_op_i;
+  slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
+  slot_meta->coalesce_num += update_op_i;
+
+
 }
 
 /* ---------------------------------------------------------------------------
@@ -476,7 +465,7 @@ static inline void insert_prep_help(context_t *ctx, void* prep_ptr,
   uint32_t session_id = fill_prepare_based_on_source(ctx, prep, source, (source_t) source_flag);
 
   // link it with zk_ctx to lead it later it to the KVS
-  zk_ctx->ptrs_to_ops[w_ptr] = prep;
+  zk_ctx->ptr_to_op[w_ptr] = prep;
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
   zk_prep_mes_t *prep_mes = (zk_prep_mes_t *) get_fifo_push_slot(send_fifo);
@@ -521,6 +510,17 @@ static inline void insert_read_help(context_t *ctx, void *r_ptr,
   }
   fifo_incr_push_ptr(zk_ctx->r_meta);
 }
+
+//static inline void insert_com_help(context_t *ctx, void *r_ptr,
+//                                   void *source, uint32_t source_flag)
+//{
+//  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+//  per_qp_meta_t *qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
+//  fifo_t* send_fifo = qp_meta->send_fifo;
+//
+//
+//
+//}
 
 static inline void insert_mes(context_t *ctx,
                               uint16_t qp_id,
