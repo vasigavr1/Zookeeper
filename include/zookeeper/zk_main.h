@@ -509,6 +509,7 @@ typedef struct w_rob {
 
 // A data structute that keeps track of the outstanding writes
 typedef struct zk_ctx {
+  // reorder buffers
   fifo_t *r_rob;
 	fifo_t *w_rob;
 

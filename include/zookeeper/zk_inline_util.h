@@ -109,9 +109,6 @@ static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
 //------------------------------  -----------------------------
 //---------------------------------------------------------------------------*/
 
-
-
-
 // Send a batched ack that denotes the first local write id and the number of subsequent lid that are being acked
 static inline void send_acks_to_ldr(context_t *ctx)
 {
@@ -280,8 +277,8 @@ static inline void send_unicasts(context_t *ctx,
 
 
 
-// Follower propagates Updates that have seen all acks to the KVS
-static inline void flr_propagate_updates(context_t *ctx)
+// Propagates Updates that have seen all acks to the KVS
+static inline void propagate_updates(context_t *ctx)
 {
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
   fifo_t *prep_buf_mirror = ctx->qp_meta[PREP_ACK_QP_ID].mirror_remote_recv_fifo;
@@ -289,10 +286,8 @@ static inline void flr_propagate_updates(context_t *ctx)
   uint16_t update_op_i = 0;
   // remember the starting point to use it when writing the KVS
   uint32_t starting_pull_ptr = zk_ctx->w_rob->pull_ptr;
-  // Read the latest committed g_id
   uint64_t committed_g_id = atomic_load_explicit(&committed_global_w_id, memory_order_relaxed);
   flr_increase_counter_if_waiting_for_commit(zk_ctx, committed_g_id, ctx->t_id);
-  w_rob_t *w_rob = (w_rob_t *) get_fifo_pull_slot(zk_ctx->w_rob);
   while(((w_rob_t *) get_fifo_pull_slot(zk_ctx->w_rob))->w_state == READY) {
     if (!is_expected_g_id_ready(zk_ctx, &committed_g_id, &update_op_i,
                                 ctx->t_id))
@@ -300,62 +295,29 @@ static inline void flr_propagate_updates(context_t *ctx)
   }
 
   if (update_op_i > 0) {
-    if (ENABLE_ASSERTIONS) {
-      assert(zk_ctx->p_acks->slots_ahead >= update_op_i);
+    if (zk_ctx->protocol == FOLLOWER) {
+      remove_from_the_mirrored_buffer(prep_buf_mirror, update_op_i,
+                                      ctx->t_id, 0, FLR_PREP_BUF_SLOTS);
+      if (ENABLE_ASSERTIONS)
+        assert(zk_ctx->p_acks->slots_ahead >= update_op_i);
+      zk_ctx->p_acks->slots_ahead -= update_op_i;
+
     }
-    remove_from_the_mirrored_buffer(prep_buf_mirror, update_op_i,
-                                    ctx->t_id, 0, FLR_PREP_BUF_SLOTS);
+    else {
+      zk_insert_commit(ctx, update_op_i);
+    }
 
     zk_ctx->local_w_id += update_op_i; // advance the local_w_id
-    zk_ctx->p_acks->slots_ahead -= update_op_i;
     fifo_decrease_capacity(zk_ctx->w_rob, update_op_i);
-    zk_KVS_batch_op_updates((uint16_t) update_op_i, zk_ctx,  starting_pull_ptr,
-                            FLR_PENDING_WRITES, true, ctx->t_id);
+    zk_KVS_batch_op_updates((uint16_t) update_op_i, zk_ctx, starting_pull_ptr,
+                            ctx->t_id);
+
     if (ENABLE_GIDS)
       atomic_store_explicit(&committed_global_w_id, committed_g_id, memory_order_relaxed);
-    zk_signal_completion_and_bookkeepfor_writes(zk_ctx, update_op_i, starting_pull_ptr,
-                                                FOLLOWER, ctx->t_id);
+    zk_signal_completion_and_bookkeep_for_writes(zk_ctx, update_op_i, starting_pull_ptr,
+                                                 zk_ctx->protocol, ctx->t_id);
   }
 }
-
-
-// Leader propagates Updates that have seen all acks to the KVS
-static inline void ldr_propagate_updates(context_t *ctx)
-{
-  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-//  printf("Ldr %d propagating updates \n", t_id);
-  uint16_t update_op_i = 0;
-  // remember the starting point to use it when writing the KVS
-  uint32_t starting_pull_ptr = zk_ctx->w_rob->pull_ptr;
-  // Read the latest committed g_id
-  uint64_t committed_g_id = atomic_load_explicit(&committed_global_w_id, memory_order_relaxed);
-  //w_rob_t *w_rob = (w_rob_t *) get_fifo_pull_slot(zk_ctx->w_rob);
-  while(((w_rob_t *) get_fifo_pull_slot(zk_ctx->w_rob))->w_state == READY) {
-    // the commit prep_message is full: that may be too restricting,
-    // but it does not affect performance or correctness
-    //if (com_fifo->capacity == COMMIT_FIFO_SIZE) break;
-    if (!is_expected_g_id_ready(zk_ctx, &committed_g_id, &update_op_i,
-                                ctx->t_id))
-      break;
-  }
-  if (update_op_i > 0) {
-
-    zk_insert_commit(ctx, update_op_i);
-    zk_ctx->local_w_id += update_op_i; // advance the local_w_id
-
-    if (ENABLE_ASSERTIONS) assert(zk_ctx->w_rob->capacity >= update_op_i);
-    zk_ctx->w_rob->capacity -= update_op_i;
-    zk_KVS_batch_op_updates((uint16_t) update_op_i, zk_ctx, starting_pull_ptr,
-                            LEADER_PENDING_WRITES, false, ctx->t_id);
-
-    atomic_store_explicit(&committed_global_w_id, committed_g_id, memory_order_relaxed);
-    zk_signal_completion_and_bookkeepfor_writes(zk_ctx, update_op_i, starting_pull_ptr,
-                                                 LEADER, ctx->t_id);
-  }
-
-  check_ldr_p_states(ctx);
-}
-
 
 
 /* ---------------------------------------------------------------------------
@@ -536,36 +498,36 @@ static inline bool r_rep_handler(context_t *ctx)
   fifo_t *recv_fifo = qp_meta->recv_fifo;
   volatile zk_r_rep_mes_ud_t *incoming_r_reps = (volatile zk_r_rep_mes_ud_t *) recv_fifo->fifo;
   zk_r_rep_mes_t *r_rep_mes = (zk_r_rep_mes_t *) &incoming_r_reps[recv_fifo->pull_ptr].r_rep_mes;
-  fifo_t *r_meta_fifo = zk_ctx->r_rob;
+  fifo_t *r_rob_fifo = zk_ctx->r_rob;
   if (DEBUG_READ_REPS)
     my_printf(cyan, "WRKR %u: RECEIVING R_REP: l_id %u/%lu, coalesce_num %u \n",
               ctx->t_id, r_rep_mes->l_id, zk_ctx->local_r_id, r_rep_mes->coalesce_num);
 
-  assert(r_meta_fifo->capacity > 0);
+  assert(r_rob_fifo->capacity > 0);
   uint64_t l_id = r_rep_mes->l_id;
   (*qp_meta->credits)++;
   uint16_t byte_ptr = R_REP_MES_HEADER;
   for (int r_rep_i = 0; r_rep_i < r_rep_mes->coalesce_num; ++r_rep_i) {
-    r_rob_t *r_meta = (r_rob_t *) get_fifo_pull_slot(r_meta_fifo);
+    r_rob_t *r_rob = (r_rob_t *) get_fifo_pull_slot(r_rob_fifo);
 
     zk_r_rep_big_t *r_rep = (zk_r_rep_big_t *) (((void *) r_rep_mes) + byte_ptr);
 
     if (DEBUG_READ_REPS)
       my_printf(yellow, "Wrkr: %u R_rep %u/%u opcode %u, session %u\n",
-                ctx->t_id, r_rep_i, r_rep_mes->coalesce_num, r_rep->opcode, r_meta->sess_id);
+                ctx->t_id, r_rep_i, r_rep_mes->coalesce_num, r_rep->opcode, r_rob->sess_id);
 
-    assert(r_meta->state = VALID);
-    assert(r_meta->l_id == r_rep_mes->l_id + r_rep_i);
+    assert(r_rob->state = VALID);
+    assert(r_rob->l_id == r_rep_mes->l_id + r_rep_i);
     byte_ptr += get_size_from_opcode(r_rep->opcode);
-    uint8_t *value_to_read =  r_rep->opcode == G_ID_EQUAL ? r_meta->value : r_rep->value;
-    memcpy(r_meta->value_to_read, value_to_read, VALUE_SIZE);
+    uint8_t *value_to_read =  r_rep->opcode == G_ID_EQUAL ? r_rob->value : r_rep->value;
+    memcpy(r_rob->value_to_read, value_to_read, VALUE_SIZE);
     zk_ctx->local_r_id++;
 
-    zk_ctx->stalled[r_meta->sess_id] = false;
+    zk_ctx->stalled[r_rob->sess_id] = false;
     zk_ctx->all_sessions_stalled = false;
-    r_meta->state = INVALID;
-    fifo_incr_pull_ptr(r_meta_fifo);
-    fifo_decrem_capacity(r_meta_fifo);
+    r_rob->state = INVALID;
+    fifo_incr_pull_ptr(r_rob_fifo);
+    fifo_decrem_capacity(r_rob_fifo);
   }
 
   return true;
@@ -851,7 +813,7 @@ static inline void flr_main_loop(context_t *ctx)
   poll_incoming_messages(ctx, COMMIT_W_QP_ID);
 
 
-  flr_propagate_updates(ctx);
+  propagate_updates(ctx);
 
 
   poll_incoming_messages(ctx, R_QP_ID);
@@ -877,7 +839,8 @@ static inline void ldr_main_loop(context_t *ctx)
 
   poll_incoming_messages(ctx, PREP_ACK_QP_ID);
 
-  ldr_propagate_updates(ctx);
+  propagate_updates(ctx);
+  check_ldr_p_states(ctx);
 
   ldr_poll_credits(ctx);
 

@@ -163,11 +163,11 @@ static inline bool is_expected_g_id_ready(zk_ctx_t *zk_ctx,
 }
 
 
-static inline void zk_signal_completion_and_bookkeepfor_writes(zk_ctx_t *zk_ctx,
-                                                               uint16_t update_op_i,
-                                                               uint32_t start_pull_ptr,
-                                                               protocol_t protocol,
-                                                               uint16_t t_id)
+static inline void zk_signal_completion_and_bookkeep_for_writes(zk_ctx_t *zk_ctx,
+                                                                uint16_t update_op_i,
+                                                                uint32_t start_pull_ptr,
+                                                                protocol_t protocol,
+                                                                uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS)
     assert(start_pull_ptr ==
@@ -175,7 +175,10 @@ static inline void zk_signal_completion_and_bookkeepfor_writes(zk_ctx_t *zk_ctx,
 
   for (int w_i = 0; w_i < update_op_i; ++w_i) {
     w_rob_t * w_rob = (w_rob_t *) get_fifo_slot(zk_ctx->w_rob, start_pull_ptr);
-    if (protocol == LEADER) w_rob->acks_seen = 0;
+    if (protocol == LEADER)
+    {
+      w_rob->acks_seen = 0;
+    }
 
     if (w_rob->is_local) {
       uint32_t sess_id = w_rob->session_id;
@@ -409,10 +412,10 @@ static inline uint16_t fill_prepare_based_on_source(context_t *ctx,
 static inline void fill_read(context_t *ctx, zk_read_t *read)
 {
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-  r_rob_t *r_meta = (r_rob_t *) get_fifo_push_slot(zk_ctx->r_rob);
+  r_rob_t *r_rob = (r_rob_t *) get_fifo_push_slot(zk_ctx->r_rob);
   read->opcode = KVS_OP_GET;
-  read->key = r_meta->key;
-  read->g_id = r_meta->g_id;
+  read->key = r_rob->key;
+  read->g_id = r_rob->g_id;
 }
 
 
@@ -495,7 +498,7 @@ static inline void insert_read_help(context_t *ctx, void *r_ptr,
                                     void *source, uint32_t source_flag)
 {
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-  r_rob_t *r_meta = (r_rob_t *) get_fifo_push_slot(zk_ctx->r_rob);
+  r_rob_t *r_rob = (r_rob_t *) get_fifo_push_slot(zk_ctx->r_rob);
   fill_read(ctx, (zk_read_t *) r_ptr);
 
   per_qp_meta_t *qp_meta = &ctx->qp_meta[R_QP_ID];
@@ -507,22 +510,13 @@ static inline void insert_read_help(context_t *ctx, void *r_ptr,
   }
 
   if (slot_meta->coalesce_num == 1) {
-    r_mes->l_id = r_meta->l_id;
+    r_mes->l_id = r_rob->l_id;
     fifo_set_push_backward_ptr(send_fifo, zk_ctx->r_rob->push_ptr);
   }
   fifo_incr_push_ptr(zk_ctx->r_rob);
 }
 
-//static inline void insert_com_help(context_t *ctx, void *r_ptr,
-//                                   void *source, uint32_t source_flag)
-//{
-//  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-//  per_qp_meta_t *qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
-//  fifo_t* send_fifo = qp_meta->send_fifo;
-//
-//
-//
-//}
+
 
 static inline void insert_mes(context_t *ctx,
                               uint16_t qp_id,

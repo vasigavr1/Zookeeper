@@ -35,24 +35,23 @@ static inline void KVS_remote_read(zk_ctx_t *zk_ctx,
                                    uint16_t t_id)
 {
   uint32_t r_push_ptr = *r_push_ptr_;
-  r_rob_t *r_meta = (r_rob_t *) get_fifo_slot(zk_ctx->r_rob, r_push_ptr);
+  r_rob_t *r_rob = (r_rob_t *) get_fifo_slot(zk_ctx->r_rob, r_push_ptr);
 
   uint32_t debug_cntr = 0;
   uint64_t tmp_lock = read_seqlock_lock_free(&kv_ptr->seqlock);
   do {
     debug_stalling_on_lock(&debug_cntr, "remote read", t_id);
-    memcpy(r_meta->value, kv_ptr->value, (size_t) VALUE_SIZE);
-    r_meta->g_id = kv_ptr->g_id;
+    memcpy(r_rob->value, kv_ptr->value, (size_t) VALUE_SIZE);
+    r_rob->g_id = kv_ptr->g_id;
   } while (!(check_seqlock_lock_free(&kv_ptr->seqlock, &tmp_lock)));
 
-  r_meta->key = op->key;
-  r_meta->val_len = op->val_len;
-  r_meta->value_to_read = op->value_to_read;
-  r_meta->sess_id = op->session_id;
-  assert(zk_ctx->stalled[r_meta->sess_id]);
-  r_meta->state = VALID;
-  r_meta->seen_larger_g_id = false;
-  r_meta->l_id = zk_ctx->local_r_id + zk_ctx->r_rob->capacity ;
+  r_rob->key = op->key;
+  r_rob->val_len = op->val_len;
+  r_rob->value_to_read = op->value_to_read;
+  r_rob->sess_id = op->session_id;
+  assert(zk_ctx->stalled[r_rob->sess_id]);
+  r_rob->state = VALID;
+  r_rob->l_id = zk_ctx->local_r_id + zk_ctx->r_rob->capacity ;
   resp->type = KVS_GET_SUCCESS;
   MOD_INCR(r_push_ptr, FLR_PENDING_READS);
   (*r_push_ptr_) =  r_push_ptr;
@@ -120,8 +119,8 @@ static inline void zk_KVS_batch_op_trace(zk_ctx_t *zk_ctx, uint16_t op_num,
 
 ///* The leader and follower send the writes to be committed with this function*/
 static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_ctx_t *zk_ctx,
-                                           uint32_t pull_ptr, uint32_t max_op_size,
-                                           bool zero_ops, uint16_t t_id)
+                                           uint32_t pull_ptr,
+                                           uint16_t t_id)
 {
 
   if (DISABLE_UPDATING_KVS) return;
@@ -137,14 +136,14 @@ static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_ctx_t *zk_ctx,
   mica_op_t *kv_ptr[ZK_UPDATE_BATCH];	/* Ptr to KV item in log */
 
   for(op_i = 0; op_i < op_num; op_i++) {
-    w_rob_t *w_rob = (w_rob_t *) get_fifo_slot(zk_ctx->w_rob, (pull_ptr + op_i) % max_op_size);
+    w_rob_t *w_rob = (w_rob_t *) get_fifo_slot_mod(zk_ctx->w_rob, pull_ptr+ op_i);
     zk_prepare_t *op = w_rob->ptr_to_op; //preps[(pull_ptr + op_i) % max_op_size];
     KVS_locate_one_bucket(op_i, bkt, &op->key, bkt_ptr, tag, kv_ptr, KVS);
   }
   KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
 
   for(op_i = 0; op_i < op_num; op_i++) {
-    w_rob_t *w_rob = (w_rob_t *) get_fifo_slot(zk_ctx->w_rob, (pull_ptr + op_i) % max_op_size);
+    w_rob_t *w_rob = (w_rob_t *) get_fifo_slot_mod(zk_ctx->w_rob, pull_ptr + op_i);
     zk_prepare_t *op = w_rob->ptr_to_op;
     //zk_prepare_t *op = preps[(pull_ptr + op_i) % max_op_size];
     if (ENABLE_ASSERTIONS && kv_ptr[op_i] == NULL) {
@@ -172,10 +171,6 @@ static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_ctx_t *zk_ctx,
       my_printf(red, "wrong Opcode to an update in kvs: %d, req %d, flr_id %u, val_len %u, g_id %lu , \n",
                  op->opcode, op_i, op->flr_id, op->val_len, op->g_id);
       assert(0);
-    }
-    if (zero_ops) {
-      //printf("Zero out %d at address %p \n", op->opcode, (void *)&op->opcode);
-      op->opcode = 5;
     }
   }
 }
