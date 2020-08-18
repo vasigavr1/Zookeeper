@@ -53,7 +53,7 @@
  * -----------------------------ZOOKEEPER---------------------------------------
  * --------------------------------------------------------------------------------
  * --------------------------------------------------------------------------------*/
-typedef enum {FOLLOWER = 1, LEADER} protocol_t;
+typedef enum {FOLLOWER = 1, LEADER, ROTATING} protocol_t;
 
 
 
@@ -534,9 +534,8 @@ typedef struct zk_ctx {
 	bool *stalled;
 
 	bool all_sessions_stalled;
-  quorum_info_t *q_info;
   protocol_t protocol;
-  uint32_t polled_messages;
+  //uint32_t polled_messages;
 
 	uint32_t wait_for_gid_dbg_counter;
 } zk_ctx_t;

@@ -5,12 +5,12 @@
 #ifndef KITE_ZK_DEBUG_UTIL_H
 #define KITE_ZK_DEBUG_UTIL_H
 
-#include <network_context.h>
+#include "../../../odlib/include/network_api/network_context.h"
 #include "zk_main.h"
 /* ---------------------------------------------------------------------------
 //------------------------------ ZOOKEEPER DEBUGGING -----------------------------
 //---------------------------------------------------------------------------*/
-static inline const char* w_state_to_str(w_state_t state)
+static inline char* w_state_to_str(w_state_t state)
 {
   switch (state) {
 
@@ -24,13 +24,15 @@ static inline const char* w_state_to_str(w_state_t state)
 }
 
 
-static inline const char* prot_to_str(protocol_t protocol)
+static inline char* prot_to_str(protocol_t protocol)
 {
   switch (protocol){
     case FOLLOWER:
       return "FOLLOWER";
     case LEADER:
       return "LEADER";
+    case ROTATING:
+      return "ROTATING LDR";
     default: if (ENABLE_ASSERTIONS) assert(false);
   }
 }
@@ -222,12 +224,11 @@ static inline void zk_check_ack_l_id_is_small_enough(uint16_t ack_num,
 
 static inline void zk_debug_info_bookkeep(context_t *ctx,
                                           uint16_t qp_id,
-                                          int completed_messages,
-                                          uint32_t polled_messages)
+                                          int completed_messages)
 {
   per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
   if (qp_meta->recv_type == RECV_REPLY) {
-    if (polled_messages > 0) {
+    if (qp_meta->polled_messages > 0) {
       if (ENABLE_ASSERTIONS) qp_meta->wait_for_reps_ctr = 0;
     }
     else {
@@ -238,7 +239,7 @@ static inline void zk_debug_info_bookkeep(context_t *ctx,
     }
   }
   if (ENABLE_ASSERTIONS) {
-    assert(qp_meta->recv_info->posted_recvs >= polled_messages);
+    assert(qp_meta->recv_info->posted_recvs >= qp_meta->polled_messages);
     //assert(qp_meta->recv_info->posted_recvs <= qp_meta->recv_wr_num);
   }
 }

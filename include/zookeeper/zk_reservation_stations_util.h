@@ -207,7 +207,7 @@ static inline void ldr_poll_credits(context_t *ctx)
 {
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *cred_qp_meta = &ctx->qp_meta[FC_QP_ID];
-  quorum_info_t *q_info = zk_ctx->q_info;
+  quorum_info_t *q_info = ctx->q_info;
   uint16_t *credits = ctx->qp_meta[COMMIT_W_QP_ID].credits;
   bool poll_for_credits = false;
   for (uint8_t j = 0; j < q_info->active_num; j++) {
@@ -234,7 +234,7 @@ static inline void ldr_poll_credits(context_t *ctx)
     }
 
     post_recvs_with_recv_info(cred_qp_meta->recv_info,
-                              credits_found);
+                              (uint32_t) credits_found);
 
   }
   else if(unlikely(credits_found < 0)) {
@@ -245,40 +245,6 @@ static inline void ldr_poll_credits(context_t *ctx)
 }
 
 
-// Form Broadcast work requests for the leader
-static inline void forge_commit_wrs(context_t *ctx, zk_com_mes_t *com_mes,
-                                    quorum_info_t *q_info, uint16_t br_i)
-{
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
-  qp_meta->send_sgl[br_i].addr = (uint64_t) (uintptr_t) com_mes;
-  qp_meta->send_sgl[br_i].length = LDR_COM_SEND_SIZE;
-  if (ENABLE_ASSERTIONS) {
-    assert(qp_meta->send_sgl[br_i].length <= LDR_COM_SEND_SIZE);
-    if (!USE_QUORUM)
-      assert(com_mes->com_num <= LEADER_PENDING_WRITES);
-  }
-  //my_printf(green, "Leader %d : I BROADCAST a message with %d commits, opcode %d credits: %d, l_id %lu \n",
-  //             t_id, com_mes->com_num, com_mes->opcode, credits[COMM_VC][1], com_mes->l_id);
-  form_bcast_links(&qp_meta->sent_tx, qp_meta->ss_batch, q_info, br_i,
-                   qp_meta->send_wr, qp_meta->send_cq, "forging commits", ctx->t_id);
-}
-
-
-// Form the Broadcast work request for the prepare
-static inline void forge_bcast_wr(context_t *ctx,
-                                  uint16_t qp_id,
-                                  uint16_t br_i)
-{
-  zk_ctx_t * zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
-  struct ibv_sge *send_sgl = qp_meta->send_sgl;
-
-  fifo_t *send_fifo = qp_meta->send_fifo;
-  send_sgl[br_i].length = get_fifo_slot_meta_pull(send_fifo)->byte_size;
-  send_sgl[br_i].addr = (uintptr_t) get_fifo_pull_slot(send_fifo);
-  form_bcast_links(&qp_meta->sent_tx, qp_meta->ss_batch, zk_ctx->q_info, br_i,
-                   qp_meta->send_wr, qp_meta->send_cq, qp_meta->send_string, ctx->t_id);
-}
 
 
 /* ---------------------------------------------------------------------------
@@ -581,6 +547,71 @@ static inline void zk_fill_trace_op(context_t *ctx,
     if (is_update) assert(op->val_len > 0);
   }
 }
+
+
+/* ---------------------------------------------------------------------------
+//------------------------------ -----------------------------
+//---------------------------------------------------------------------------*/
+
+
+
+static inline void zk_increase_prep_credits(uint16_t *credits, zk_ack_mes_t *ack,
+                                            struct fifo *remote_prep_buf, uint16_t t_id)
+{
+  uint8_t rm_id = (uint8_t) (ack->follower_id > LEADER_MACHINE ? ack->follower_id - 1 : ack->follower_id);
+  credits[ack->follower_id] +=
+    remove_from_the_mirrored_buffer(remote_prep_buf, ack->ack_num, t_id, rm_id, FLR_PREP_BUF_SLOTS);
+
+  if (ENABLE_ASSERTIONS) {
+    if (credits[ack->follower_id] > PREPARE_CREDITS)
+      my_printf(red, "Prepare credits %u for follower %u \n", credits[ack->follower_id], ack->follower_id);
+  }
+}
+
+static inline uint32_t zk_find_the_first_prepare_that_gets_acked(uint16_t *ack_num,
+                                                                 uint64_t l_id, zk_ctx_t *zk_ctx,
+                                                                 uint64_t pull_lid, uint16_t t_id)
+{
+
+  if (pull_lid >= l_id) {
+    (*ack_num) -= (pull_lid - l_id);
+    if (ENABLE_ASSERTIONS) assert(*ack_num > 0 && *ack_num <= FLR_PENDING_WRITES);
+    return zk_ctx->w_rob->pull_ptr;
+  }
+  else { // l_id > pull_lid
+    return (uint32_t) (zk_ctx->w_rob->pull_ptr + (l_id - pull_lid)) % LEADER_PENDING_WRITES;
+  }
+}
+
+static inline void zk_apply_acks(uint16_t ack_num, uint32_t ack_ptr,
+                                 uint64_t l_id, zk_ctx_t *zk_ctx,
+                                 uint64_t pull_lid, uint32_t *outstanding_prepares,
+                                 uint16_t t_id)
+{
+  for (uint16_t ack_i = 0; ack_i < ack_num; ack_i++) {
+
+    if (ENABLE_ASSERTIONS && (ack_ptr == zk_ctx->w_rob->push_ptr)) {
+      uint32_t origin_ack_ptr = (uint32_t) (ack_ptr - ack_i + LEADER_PENDING_WRITES) % LEADER_PENDING_WRITES;
+      my_printf(red, "Origin ack_ptr %u/%u, acks %u/%u, w_pull_ptr %u, w_push_ptr % u, capacity %u \n",
+                origin_ack_ptr,  (zk_ctx->w_rob->pull_ptr + (l_id - pull_lid)) % LEADER_PENDING_WRITES,
+                ack_i, ack_num, zk_ctx->w_rob->pull_ptr, zk_ctx->w_rob->push_ptr, zk_ctx->w_rob->capacity);
+    }
+
+    w_rob_t *w_rob = (w_rob_t *) get_fifo_slot(zk_ctx->w_rob, ack_ptr);
+    w_rob->acks_seen++;
+    if (w_rob->acks_seen == LDR_QUORUM_OF_ACKS) {
+      if (ENABLE_ASSERTIONS) (*outstanding_prepares)--;
+//        printf("Leader %d valid ack %u/%u write at ptr %d with g_id %lu is ready \n",
+//               t_id, ack_i, ack_num,  ack_ptr, zk_ctx->g_id[ack_ptr]);
+      w_rob->w_state = READY;
+
+    }
+    MOD_INCR(ack_ptr, LEADER_PENDING_WRITES);
+  }
+}
+
+
+
 
 
 #endif //KITE_ZK_RESERVATION_STATIONS_UTIL_H_H

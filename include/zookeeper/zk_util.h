@@ -1,10 +1,10 @@
 #ifndef ZK_UTILS_H
 #define ZK_UTILS_H
 
-#include "../../../shared/include/multicast/multicast.h"
+#include "multicast.h"
 #include "kvs.h"
 #include "zk_main.h"
-#include <network_context.h>
+#include "../../../odlib/include/network_api/network_context.h"
 //#include "init_connect.h"
 
 
@@ -54,9 +54,6 @@ void zk_init_qp_meta(context_t *ctx, protocol_t protocol);
 // Set up a struct that stores pending writes
 zk_ctx_t *set_up_zk_ctx(context_t *ctx, protocol_t);
 
-
-// set up some basic leader buffers
-void zk_init_send_fifos(context_t *ctx);
 
 /* ---------------------------------------------------------------------------
 ------------------------------UTILITY --------------------------------------

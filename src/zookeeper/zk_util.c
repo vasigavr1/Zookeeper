@@ -117,36 +117,6 @@ void dump_stats_2_file(struct stats* st){
 }
 
 
-
-// Initialize the quorum info that contains the system configuration
-quorum_info_t* set_up_q_info(context_t *ctx)
-{
-  quorum_info_t * q_info = (quorum_info_t *) calloc(1, sizeof(quorum_info_t));
-  q_info->active_num = REM_MACH_NUM;
-  q_info->first_active_rm_id = 0;
-  q_info->last_active_rm_id = REM_MACH_NUM - 1;
-  for (uint8_t i = 0; i < REM_MACH_NUM; i++) {
-    uint8_t m_id = i < machine_id ? i : (uint8_t) (i + 1);
-    q_info->active_ids[i] = m_id;
-    q_info->send_vector[i] = true;
-  }
-
-  q_info->num_of_send_wrs = Q_INFO_NUM_SEND_WRS;
-  q_info->send_wrs_ptrs = (struct ibv_send_wr **) malloc(Q_INFO_NUM_SEND_WRS * sizeof(struct ibv_send_wr *));
-  q_info->send_wrs_ptrs[0] = ctx->qp_meta[PREP_ACK_QP_ID].send_wr;
-  q_info->send_wrs_ptrs[1] = ctx->qp_meta[COMMIT_W_QP_ID].send_wr;
-
-  q_info->num_of_credit_targets = Q_INFO_CREDIT_TARGETS;
-  q_info->targets = malloc (q_info->num_of_credit_targets * sizeof(uint16_t));
-  q_info->targets[0] = W_CREDITS;
-  q_info->targets[1] = COMMIT_CREDITS;
-  q_info->credit_ptrs = malloc(q_info->num_of_credit_targets * sizeof(uint16_t*));
-  q_info->credit_ptrs[0] = ctx->qp_meta[PREP_ACK_QP_ID].credits;
-  q_info->credit_ptrs[1] = ctx->qp_meta[COMMIT_W_QP_ID].credits;
-  return q_info;
-
-}
-
 void zk_ldr_qp_meta_init(per_qp_meta_t *qp_meta)
 {
   ///
@@ -209,21 +179,86 @@ void zk_flr_qp_meta_init(per_qp_meta_t *qp_meta)
                      "send reads", "recv read_replies");
 }
 
-void zk_ldr_qp_meta_mfs(per_qp_meta_t *qp_meta)
+void rl_qp_meta_init(per_qp_meta_t *qp_meta)
 {
-  ctx_qp_meta_mfs(&qp_meta[PREP_ACK_QP_ID], ack_handler, send_prepares_helper, NULL, insert_prep_help);
-  ctx_qp_meta_mfs(&qp_meta[COMMIT_W_QP_ID], write_handler, send_commits_helper, NULL, NULL);
-  ctx_qp_meta_mfs(&qp_meta[R_QP_ID], r_handler, send_r_reps_helper, zk_KVS_batch_op_reads, insert_r_rep_help);
+  ///
+  create_per_qp_meta(&qp_meta[PREP_ACK_QP_ID], LDR_MAX_PREP_WRS,
+                     LDR_MAX_RECV_ACK_WRS, SEND_BCAST_LDR_RECV_UNI,  RECV_REPLY,
+                     FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_ACK_BUF_SLOTS,
+                     LDR_ACK_RECV_SIZE, LDR_PREP_SEND_SIZE, ENABLE_MULTICAST, false,
+                     PREP_MCAST_QP, LEADER_MACHINE, PREP_FIFO_SIZE,
+                     PREPARE_CREDITS, PREP_MES_HEADER,
+                     "send preps", "recv acks");
+  ///
+  create_per_qp_meta(&qp_meta[COMMIT_W_QP_ID], LDR_MAX_COM_WRS,
+                     LDR_MAX_RECV_W_WRS, SEND_BCAST_LDR_RECV_UNI, RECV_REQ,
+                     FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_W_BUF_SLOTS,
+                     LDR_W_RECV_SIZE, LDR_COM_SEND_SIZE, ENABLE_MULTICAST, false,
+                     COM_MCAST_QP, LEADER_MACHINE, COMMIT_FIFO_SIZE,
+                     COMMIT_CREDITS, LDR_COM_SEND_SIZE,
+                     "send commits", "recv writes");
+  ///
+  create_per_qp_meta(&qp_meta[FC_QP_ID], 0, LDR_MAX_CREDIT_RECV, RECV_CREDITS, RECV_REPLY,
+                     0, FOLLOWER_MACHINE_NUM, 0,
+                     0, 0, false, false,
+                     0, LEADER_MACHINE, 0, 0, 0,
+                     NULL, "recv credits");
+  ///
+  create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_REP_WRS, MAX_RECV_R_WRS, SEND_UNI_REP_LDR_RECV_UNI_REQ, RECV_REQ,
+                     FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_R_BUF_SLOTS,
+                     R_RECV_SIZE, R_REP_SEND_SIZE, false, false,
+                     0, LEADER_MACHINE, R_REP_FIFO_SIZE, 0, R_REP_MES_HEADER,
+                     "send r_Reps", "recv reads");
 }
 
 
-void zk_flr_qp_meta_mfs(per_qp_meta_t *qp_meta)
+void zk_ldr_qp_meta_mfs(context_t *ctx)
 {
-  ctx_qp_meta_mfs(&qp_meta[PREP_ACK_QP_ID], prepare_handler, NULL, NULL, NULL);
-  ctx_qp_meta_mfs(&qp_meta[COMMIT_W_QP_ID],  commit_handler, send_writes_helper, NULL, insert_write_help);
-  ctx_qp_meta_mfs(&qp_meta[R_QP_ID], r_rep_handler, send_reads_helper, NULL, insert_read_help);
+  mf_t *mfs = calloc(QP_NUM, sizeof(mf_t));
+
+  mfs[PREP_ACK_QP_ID].recv_handler = ack_handler;
+  mfs[PREP_ACK_QP_ID].send_helper = send_prepares_helper;
+  mfs[PREP_ACK_QP_ID].insert_helper = insert_prep_help;
+  mfs[PREP_ACK_QP_ID].polling_debug = zk_debug_info_bookkeep;
+
+  mfs[COMMIT_W_QP_ID].recv_handler = write_handler;
+  mfs[COMMIT_W_QP_ID].send_helper = send_commits_helper;
+  mfs[COMMIT_W_QP_ID].polling_debug = zk_debug_info_bookkeep;
+
+  mfs[R_QP_ID].recv_handler = r_handler;
+  mfs[R_QP_ID].send_helper = send_r_reps_helper;
+  mfs[R_QP_ID].recv_kvs = zk_KVS_batch_op_reads;
+  mfs[R_QP_ID].insert_helper = insert_r_rep_help;
+  mfs[R_QP_ID].polling_debug = zk_debug_info_bookkeep;
+
+
+
+  ctx_set_qp_meta_mfs(ctx, mfs);
+  free(mfs);
 }
 
+
+void zk_flr_qp_meta_mfs(context_t *ctx)
+{
+  mf_t *mfs = calloc(QP_NUM, sizeof(mf_t));
+
+  mfs[PREP_ACK_QP_ID].recv_handler = prepare_handler;
+  mfs[PREP_ACK_QP_ID].polling_debug = zk_debug_info_bookkeep;
+
+  mfs[COMMIT_W_QP_ID].recv_handler = commit_handler;
+  mfs[COMMIT_W_QP_ID].send_helper = send_writes_helper;
+  mfs[COMMIT_W_QP_ID].insert_helper = insert_write_help;
+  mfs[COMMIT_W_QP_ID].polling_debug = zk_debug_info_bookkeep;
+
+  mfs[R_QP_ID].recv_handler = r_rep_handler;
+  mfs[R_QP_ID].send_helper = send_reads_helper;
+  mfs[R_QP_ID].insert_helper = insert_read_help;
+  mfs[R_QP_ID].polling_debug = zk_debug_info_bookkeep;
+
+
+  ctx_set_qp_meta_mfs(ctx, mfs);
+  free(mfs);
+}
 
 void zk_init_ldr_send_fifos(context_t *ctx)
 {
@@ -269,7 +304,7 @@ void zk_init_qp_meta(context_t *ctx, protocol_t protocol)
   switch (protocol) {
     case FOLLOWER:
       zk_flr_qp_meta_init(qp_meta);
-      zk_flr_qp_meta_mfs(qp_meta);
+      zk_flr_qp_meta_mfs(ctx);
       zk_init_flr_send_fifos(ctx);
       ctx_qp_meta_mirror_buffers(&qp_meta[COMMIT_W_QP_ID],
                                  LEADER_W_BUF_SLOTS, 1);
@@ -286,13 +321,19 @@ void zk_init_qp_meta(context_t *ctx, protocol_t protocol)
       break;
     case LEADER:
       zk_ldr_qp_meta_init(qp_meta);
-      zk_ldr_qp_meta_mfs(qp_meta);
+      zk_ldr_qp_meta_mfs(ctx);
       zk_init_ldr_send_fifos(ctx);
       ctx_qp_meta_mirror_buffers(&qp_meta[PREP_ACK_QP_ID],
                                  FLR_PREP_BUF_SLOTS, FOLLOWER_MACHINE_NUM);
 
 
       break;
+    case ROTATING:
+      rl_qp_meta_init(qp_meta);
+      //rl_qp_meta_mfs(ctx);
+      //rl_init_send_fifos(ctx);
+      break;
+    default: assert(false);
   }
 
 
@@ -304,7 +345,6 @@ zk_ctx_t *set_up_zk_ctx(context_t *ctx, protocol_t protocol)
 
   uint32_t i;
   zk_ctx_t* zk_ctx = (zk_ctx_t*) calloc(1,sizeof(zk_ctx_t));
-  zk_ctx->q_info = protocol == LEADER ? set_up_q_info(ctx) : NULL;
   uint32_t size = protocol == LEADER ? LEADER_PENDING_WRITES : FLR_PENDING_WRITES;
   zk_ctx->protocol = protocol;
 
