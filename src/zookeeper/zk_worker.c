@@ -29,7 +29,7 @@ void *zk_worker(void *arg)
   /* -----------------------------------------------------
   --------------CONNECT -----------------------
   ---------------------------------------------------------*/
-  setup_connections_and_spawn_stats_thread(ctx->cb, t_id);
+  setup_connections_and_spawn_stats_thread(ctx);
   // We can set up the send work requests now that
   // we have address handles for remote machines
   init_ctx_send_wrs(ctx);
