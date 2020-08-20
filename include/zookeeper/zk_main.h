@@ -590,10 +590,8 @@ typedef struct thread_stats { // 2 cache lines
 extern thread_stats_t t_stats[WORKERS_PER_MACHINE];
 struct mica_op;
 extern atomic_uint_fast64_t global_w_id, committed_global_w_id;
-extern bool is_leader;
 
 
-void *zk_worker(void *arg);
 void print_latency_stats(void);
 
 

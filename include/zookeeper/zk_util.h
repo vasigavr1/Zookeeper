@@ -1,12 +1,12 @@
 #ifndef ZK_UTILS_H
 #define ZK_UTILS_H
 
+//#include <init_func.h>
 #include "multicast.h"
 #include "kvs.h"
 #include "zk_main.h"
 #include "../../../odlib/include/network_api/network_context.h"
-//#include "init_connect.h"
-
+#include <init_func.h>
 
 
 extern uint64_t seed;
@@ -49,65 +49,28 @@ void print_latency_stats(void);
 /* ---------------------------------------------------------------------------
 ------------------------------INITIALIZATION --------------------------------------
 ---------------------------------------------------------------------------*/
-void zk_init_qp_meta(context_t *ctx, protocol_t protocol);
+void zk_init_qp_meta(context_t *ctx);
 
 // Set up a struct that stores pending writes
-zk_ctx_t *set_up_zk_ctx(context_t *ctx, protocol_t);
+zk_ctx_t *set_up_zk_ctx(context_t *ctx);
 
 
 /* ---------------------------------------------------------------------------
 ------------------------------UTILITY --------------------------------------
 ---------------------------------------------------------------------------*/
-// check if the given protocol is invalid
-void check_protocol(int);
-
 
 void print_latency_stats(void);
 
 
-static mcast_cb_t* zk_init_multicast(uint16_t t_id, void* recv_buffer, int protocol)
+
+static void zk_init_functionality(int argc, char *argv[])
 {
-	check_protocol(protocol);
-	uint32_t *recv_q_depth = NULL;
-  uint16_t *group_to_send_to = NULL;
-  bool *recvs_from_flow =  NULL;
-
-	uint16_t recv_qp_num = MCAST_LDR_RECV_QP_NUM, send_num = MCAST_LDR_SEND_QP_NUM;
-
-	if (protocol == FOLLOWER) {
-		recv_q_depth = (uint32_t *) malloc(MCAST_FLR_RECV_QP_NUM * sizeof(int));
-		recv_q_depth[0] = FLR_RECV_PREP_Q_DEPTH;
-		recv_q_depth[1] = FLR_RECV_COM_Q_DEPTH;
-		recv_qp_num = MCAST_FLR_RECV_QP_NUM;
-		send_num = MCAST_FLR_SEND_QP_NUM;
-    recvs_from_flow = (bool *) malloc(MCAST_FLOW_NUM * sizeof(bool));
-    for (int i = 0; i < MCAST_FLOW_NUM; ++i) {
-      recvs_from_flow[i] = true;
-    }
-	}
-  else {
-    group_to_send_to = (uint16_t *) malloc(MCAST_FLOW_NUM * (sizeof(uint16_t)));
-    for (int i = 0; i < MCAST_FLOW_NUM; ++i) {
-      group_to_send_to[i] = 0; // Which group you want to send to in that flow
-    }
-  }
-
-
-  uint16_t *groups_per_flow = (uint16_t *) calloc(MCAST_FLOW_NUM, sizeof(uint16_t));
-	groups_per_flow[PREPARE_FLOW] = 1;
-	groups_per_flow[COMMIT_FLOW] = 1;
-
-
-
-
-
-	return create_mcast_cb(MCAST_FLOW_NUM, recv_qp_num, send_num,
-												 groups_per_flow, recv_q_depth,
-                         group_to_send_to,
-                         recvs_from_flow,
-                         local_ip,
-                         recv_buffer,
-												 (size_t) FLR_BUF_SIZE, t_id);
+  zk_print_parameters_in_the_start();
+  generic_static_assert_compile_parameters();
+  zk_static_assert_compile_parameters();
+  generic_init_globals(QP_NUM);
+  zk_init_globals();
+  handle_program_inputs(argc, argv);
 }
 
 

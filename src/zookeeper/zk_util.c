@@ -3,6 +3,8 @@
 #include <zk_inline_util.h>
 #include "zk_util.h"
 
+atomic_uint_fast64_t global_w_id, committed_global_w_id;
+
 
 void zk_print_parameters_in_the_start()
 {
@@ -38,6 +40,7 @@ void zk_print_parameters_in_the_start()
 
 void zk_static_assert_compile_parameters()
 {
+  static_assert(COMPILED_SYSTEM == zookeeper_sys, " ");
   static_assert(sizeof(zk_w_mes_t) == FLR_W_SEND_SIZE, " ");
   static_assert(sizeof(zk_r_mes_t) == R_MES_SIZE, " ");
   static_assert(sizeof(zk_read_t) == R_SIZE, " ");
@@ -298,8 +301,10 @@ void zk_init_flr_send_fifos(context_t *ctx)
   }
 }
 
-void zk_init_qp_meta(context_t *ctx, protocol_t protocol)
+void zk_init_qp_meta(context_t *ctx)
 {
+  protocol_t protocol = USE_ROTATING_LEADERS ? ROTATING :
+                        machine_id == LEADER_MACHINE ? LEADER : FOLLOWER;
   per_qp_meta_t *qp_meta = ctx->qp_meta;
   switch (protocol) {
     case FOLLOWER:
@@ -340,9 +345,10 @@ void zk_init_qp_meta(context_t *ctx, protocol_t protocol)
 }
 
 // Set up a struct that stores pending writes
-zk_ctx_t *set_up_zk_ctx(context_t *ctx, protocol_t protocol)
+zk_ctx_t *set_up_zk_ctx(context_t *ctx)
 {
-
+  protocol_t protocol = USE_ROTATING_LEADERS ? ROTATING :
+                        machine_id == LEADER_MACHINE ? LEADER : FOLLOWER;
   uint32_t i;
   zk_ctx_t* zk_ctx = (zk_ctx_t*) calloc(1,sizeof(zk_ctx_t));
   uint32_t size = protocol == LEADER ? LEADER_PENDING_WRITES : FLR_PENDING_WRITES;
