@@ -18,7 +18,7 @@ void zk_init_globals();
 /* ---------------------------------------------------------------------------
 ------------------------------STATS --------------------------------------
 ---------------------------------------------------------------------------*/
-struct stats {
+typedef struct stats {
   double batch_size_per_thread[WORKERS_PER_MACHINE];
   double com_batch_size[WORKERS_PER_MACHINE];
   double prep_batch_size[WORKERS_PER_MACHINE];
@@ -41,7 +41,9 @@ struct stats {
 	double received_preps[WORKERS_PER_MACHINE];
 
 	double write_ratio_per_client[WORKERS_PER_MACHINE];
-};
+} all_stats_t;
+
+void zk_stats(stats_ctx_t *ctx);
 void dump_stats_2_file(struct stats* st);
 void print_latency_stats(void);
 
