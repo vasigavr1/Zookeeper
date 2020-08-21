@@ -13,10 +13,7 @@
 
 
 
-
-
 #define ENABLE_CACHE_STATS 0
-
 #define DUMP_STATS_2_FILE 0
 
 
@@ -24,48 +21,17 @@
 -----------------DEBUGGING-------------------------
 --------------------------------------------------*/
 
-
-
 #define REMOTE_LATENCY_MARK 100 // mark a remote request for measurement by attaching this to the imm_data of the wr
 #define USE_A_SINGLE_KEY 0
 #define DISABLE_HYPERTHREADING 0 // do not shcedule two threads on the same core
 #define DEFAULT_SL 0 //default service level
 
 
-
-/*-------------------------------------------------
-	-----------------TRACE-----------------
---------------------------------------------------*/
-
-#define BALANCE_HOT_WRITES 0// Use a uniform access pattern among hot writes
-#define SKEW_EXPONENT_A 90 // representation divided by 100 (i.e. 99 means a = 0.99)
-#define EMULATING_CREW 1 // emulate crew, to facilitate running the CREW baseline
-#define DISABLE_CACHE 0 // Run Baseline
-#define LOAD_BALANCE 1 // Use a uniform access pattern
-#define FOLLOWER_DOES_ONLY_READS 0
-
-
-
-
-
-
 /* --------------------------------------------------------------------------------
  * -----------------------------ZOOKEEPER---------------------------------------
  * --------------------------------------------------------------------------------
  * --------------------------------------------------------------------------------*/
-typedef enum {FOLLOWER = 1, LEADER, ROTATING} protocol_t;
-
-
-
-
-
-//--------FOLLOWER Flow Control
-
-
-//--------LEADER Flow Control
-#define LDR_VC_NUM 2
-#define PREP_VC 0
-#define COMM_VC 1
+typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 
 #define LDR_CREDIT_DIVIDER (1)
 #define LDR_CREDITS_IN_MESSAGE (W_CREDITS / LDR_CREDIT_DIVIDER)
@@ -85,7 +51,7 @@ typedef enum {FOLLOWER = 1, LEADER, ROTATING} protocol_t;
 #define QUORUM_NUM ((MACHINE_NUM / 2) + 1)
 #define LDR_QUORUM_OF_ACKS (USE_QUORUM == 1 ? (QUORUM_NUM - 1): FOLLOWER_MACHINE_NUM) //FOLLOWER_MACHINE_NUM //
 
-#define MAX_LIDS_IN_AN_ACK K_64_
+
 #define ACK_SIZE 12
 #define COM_ACK_HEADER_SIZE 4 // follower id, opcode, coalesce_num
 #define FLR_ACK_SEND_SIZE (12) // a local global id and its metadata
@@ -94,9 +60,6 @@ typedef enum {FOLLOWER = 1, LEADER, ROTATING} protocol_t;
 
 // -- COMMITS-----
 
-//#define COM_SIZE 8 // gid(8)
-//#define COM_MES_HEADER_SIZE 4 // opcode + coalesce num
-//#define MAX_COM_COALESCE 2
 #define LDR_COM_SEND_SIZE (13) //l_id + com_mes_num + opcode
 #define FLR_COM_RECV_SIZE (GRH_SIZE + LDR_COM_SEND_SIZE)
 #define COM_ENABLE_INLINING ((LDR_COM_SEND_SIZE < MAXIMUM_INLINE_SIZE) ? 1: 0)
@@ -459,8 +422,6 @@ typedef struct ptrs_to_reads {
 	zk_read_t **ptr_to_ops;
 	zk_r_mes_t **ptr_to_r_mes;
 	bool *coalesce_r_rep;
-
-
 } ptrs_to_r_t;
 
 
@@ -498,7 +459,7 @@ typedef struct r_rob {
 typedef struct w_rob {
 	uint32_t session_id;
 	uint64_t g_id;
-	enum op_state w_state;
+	w_state_t w_state;
 	uint8_t flr_id;
 	uint8_t acks_seen;
 	//uint32_t index_to_req_array;

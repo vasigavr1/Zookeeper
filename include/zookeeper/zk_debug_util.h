@@ -31,8 +31,6 @@ static inline char* prot_to_str(protocol_t protocol)
       return "FOLLOWER";
     case LEADER:
       return "LEADER";
-    case ROTATING:
-      return "ROTATING LDR";
     default: if (ENABLE_ASSERTIONS) assert(false);
   }
 }
@@ -343,7 +341,7 @@ zk_check_prepare_and_print(zk_prepare_t *prepare,
   if (ENABLE_ASSERTIONS) {
     assert(prepare->sess_id < SESSIONS_PER_THREAD);
     assert(prepare->flr_id <= MACHINE_NUM);
-    if (ENABLE_GIDS)
+    if (ENABLE_GID_ORDERING)
       assert(prepare->g_id > committed_global_w_id);
     assert(prepare->val_len == VALUE_SIZE >> SHIFT_BITS);
     assert(((w_rob_t *) get_fifo_push_slot(zk_ctx->w_rob))->w_state == INVALID);
@@ -526,12 +524,15 @@ static inline void zk_checks_and_print_when_forging_unicast(context_t *ctx, uint
                length);
       if (ENABLE_ASSERTIONS) {
         /// it is possible for the read to have a slightly bigger g_id
-        assert(r_mes->read[i].g_id <= committed_global_w_id + THOUSAND);
-        //if (r_mes->read[i].g_id > committed_global_w_id) {
-        //  my_printf(red, "Sending a read with a g_id %lu/%lu \n",
-        //            r_mes->read[i].g_id, committed_global_w_id);
-        //}
-        //assert(r_mes->read[i].g_id <= committed_global_w_id);
+        if (ENABLE_GID_ORDERING) {
+          uint64_t max_allowed_g_id = committed_global_w_id + THOUSAND;// + (5 * THOUSAND);
+          //assert(r_mes->read[i].g_id <= committed_global_w_id + (5 * THOUSAND));
+          if (r_mes->read[i].g_id >= max_allowed_g_id) {
+            my_printf(red, "Sending a read with a g_id %lu/%lu \n",
+                      r_mes->read[i].g_id, max_allowed_g_id);
+          }
+          //assert(r_mes->read[i].g_id <= committed_global_w_id);
+        }
         assert(r_mes->read[i].key.bkt > 0);
       }
     }

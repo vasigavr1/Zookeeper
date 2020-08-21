@@ -77,15 +77,13 @@ static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
       assert(false);
       continue;
     }
-    // check_version_after_batching_trace_to_cache(&ops[i], &resp[i], t_id);
     // Local reads
     else if (resp[i].type == KVS_GET_SUCCESS) {
       if (ENABLE_ASSERTIONS) {
         assert(machine_id != LEADER_MACHINE);
         assert(USE_REMOTE_READS);
       }
-      insert_mes(ctx, R_QP_ID, R_SIZE, (uint32_t) R_REP_BIG_SIZE, false, NULL, NOT_USED);
-      //(ctx, zk_ctx, &ops[op_i]);
+      ctx_insert_mes(ctx, R_QP_ID, R_SIZE, (uint32_t) R_REP_BIG_SIZE, false, NULL, NOT_USED);
     }
     else if (resp[i].type == KVS_LOCAL_GET_SUCCESS) {
         //check_state_with_allowed_flags(2, interface[t_id].req_array[ops[i].session_id][ops[i].index_to_req_array].state, IN_PROGRESS_REQ);
@@ -94,11 +92,9 @@ static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
     }
     else { // WRITE
       if (zk_ctx->protocol == FOLLOWER)
-          //flr_insert_write(ctx, zk_ctx, &ops[i]);
-        insert_mes(ctx, COMMIT_W_QP_ID, (uint32_t) W_SIZE, 1, false, &ops[i], NOT_USED);
+        ctx_insert_mes(ctx, COMMIT_W_QP_ID, (uint32_t) W_SIZE, 1, false, &ops[i], NOT_USED);
       else
-        insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1, false, &ops[i], LOCAL_PREP);
-        //ldr_insert_prep(ctx, zk_ctx, (void *) &ops[i], true);
+        ctx_insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1, false, &ops[i], LOCAL_PREP);
     }
   }
 
@@ -189,8 +185,7 @@ static inline void send_writes_helper(context_t *ctx)
 
 
   add_to_the_mirrored_buffer(qp_meta->mirror_remote_recv_fifo,
-                             (uint8_t) coalesce_num, 1,
-                             LEADER_W_BUF_SLOTS, ctx->q_info);
+                             (uint8_t) coalesce_num, 1, ctx->q_info);
 }
 
 
@@ -265,7 +260,7 @@ static inline void propagate_updates(context_t *ctx)
     zk_KVS_batch_op_updates((uint16_t) update_op_i, zk_ctx, starting_pull_ptr,
                             ctx->t_id);
 
-    if (ENABLE_GIDS)
+    if (ENABLE_GID_ORDERING)
       atomic_store_explicit(&committed_global_w_id, committed_g_id, memory_order_relaxed);
     zk_signal_completion_and_bookkeep_for_writes(zk_ctx, update_op_i, starting_pull_ptr,
                                                  zk_ctx->protocol, ctx->t_id);
@@ -358,7 +353,7 @@ static inline bool write_handler(context_t *ctx)
         my_printf(red, "Opcode %u, i %u/%u \n", write->opcode, i, w_num);
     if (DEBUG_WRITES)
       printf("Poll for writes passes session id %u \n", write->sess_id);
-    insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1,
+    ctx_insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1,
                false, (void *) write, REMOTE_WRITE);
     //ldr_insert_prep(ctx, zk_ctx, (void *) write, false);
     write->opcode = 3;
@@ -474,8 +469,8 @@ static inline bool prepare_handler(context_t *ctx)
                                  incoming_l_id, expected_l_id, incoming_preps, ctx->t_id);
 
   zk_ctx->p_acks->acks_to_send+= coalesce_num; // lids are in order so ack them
-  add_to_the_mirrored_buffer(qp_meta->mirror_remote_recv_fifo, coalesce_num, 1,
-                             FLR_PREP_BUF_SLOTS, ctx->q_info);
+  add_to_the_mirrored_buffer(qp_meta->mirror_remote_recv_fifo,
+                             coalesce_num, 1, ctx->q_info);
   ///Loop through prepares inside the message
   for (uint8_t prep_i = 0; prep_i < coalesce_num; prep_i++) {
     zk_check_prepare_and_print(&prepare[prep_i], zk_ctx, prep_i, ctx->t_id);
@@ -587,7 +582,7 @@ static inline void send_prepares_helper(context_t *ctx)
 
   add_to_the_mirrored_buffer(qp_meta->mirror_remote_recv_fifo,
                              coalesce_num, FOLLOWER_MACHINE_NUM,
-                             FLR_PREP_BUF_SLOTS, ctx->q_info);
+                             ctx->q_info);
   zk_checks_and_stats_on_bcasting_prepares(send_fifo, coalesce_num,
                                            &qp_meta->outstanding_messages, ctx->t_id);
 }

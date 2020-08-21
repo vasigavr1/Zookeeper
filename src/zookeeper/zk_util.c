@@ -125,6 +125,7 @@ void zk_ldr_qp_meta_init(per_qp_meta_t *qp_meta)
   ///
   create_per_qp_meta(&qp_meta[PREP_ACK_QP_ID], LDR_MAX_PREP_WRS,
                      LDR_MAX_RECV_ACK_WRS, SEND_BCAST_LDR_RECV_UNI,  RECV_REPLY,
+                     PREP_ACK_QP_ID,
                      FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_ACK_BUF_SLOTS,
                      LDR_ACK_RECV_SIZE, LDR_PREP_SEND_SIZE, ENABLE_MULTICAST, false,
                      PREP_MCAST_QP, LEADER_MACHINE, PREP_FIFO_SIZE,
@@ -133,6 +134,7 @@ void zk_ldr_qp_meta_init(per_qp_meta_t *qp_meta)
   ///
   create_per_qp_meta(&qp_meta[COMMIT_W_QP_ID], LDR_MAX_COM_WRS,
                      LDR_MAX_RECV_W_WRS, SEND_BCAST_LDR_RECV_UNI, RECV_REQ,
+                     COMMIT_W_QP_ID,
                      FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_W_BUF_SLOTS,
                      LDR_W_RECV_SIZE, LDR_COM_SEND_SIZE, ENABLE_MULTICAST, false,
                      COM_MCAST_QP, LEADER_MACHINE, COMMIT_FIFO_SIZE,
@@ -140,12 +142,13 @@ void zk_ldr_qp_meta_init(per_qp_meta_t *qp_meta)
                      "send commits", "recv writes");
   ///
   create_per_qp_meta(&qp_meta[FC_QP_ID], 0, LDR_MAX_CREDIT_RECV, RECV_CREDITS, RECV_REPLY,
-                     0, FOLLOWER_MACHINE_NUM, 0,
+                     FC_QP_ID, 0, FOLLOWER_MACHINE_NUM, 0,
                      0, 0, false, false,
                      0, LEADER_MACHINE, 0, 0, 0,
                      NULL, "recv credits");
   ///
   create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_REP_WRS, MAX_RECV_R_WRS, SEND_UNI_REP_LDR_RECV_UNI_REQ, RECV_REQ,
+                     R_QP_ID,
                      FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_R_BUF_SLOTS,
                      R_RECV_SIZE, R_REP_SEND_SIZE, false, false,
                      0, LEADER_MACHINE, R_REP_FIFO_SIZE, 0, R_REP_MES_HEADER,
@@ -159,60 +162,31 @@ void zk_flr_qp_meta_init(per_qp_meta_t *qp_meta)
   ///
   create_per_qp_meta(&qp_meta[PREP_ACK_QP_ID], FLR_MAX_ACK_WRS,
                      FLR_MAX_RECV_PREP_WRS, SEND_UNI_REP_RECV_LDR_BCAST, RECV_REQ,
+                     PREP_ACK_QP_ID,
                      1, 1, 3 * PREPARE_CREDITS,
                      FLR_PREP_RECV_SIZE, FLR_ACK_SEND_SIZE, false, ENABLE_MULTICAST, PREP_MCAST_QP,
                      LEADER_MACHINE, 0, 0, 0, "send acks", "recv preps");
   ///
   create_per_qp_meta(&qp_meta[COMMIT_W_QP_ID], FLR_MAX_W_WRS,
                      FLR_MAX_RECV_COM_WRS, SEND_UNI_REP_RECV_LDR_BCAST, RECV_SEC_ROUND,
+                     COMMIT_W_QP_ID,
                      1, 1, COMMIT_CREDITS,
                      FLR_COM_RECV_SIZE, FLR_W_SEND_SIZE, false, ENABLE_MULTICAST, COM_MCAST_QP,
                      LEADER_MACHINE, W_FIFO_SIZE, W_CREDITS, W_MES_HEADER,
                      "send writes", "recv commits");
   ///
   create_per_qp_meta(&qp_meta[FC_QP_ID], FLR_MAX_CREDIT_WRS, 0, SEND_CREDITS_LDR_RECV_NONE, RECV_NOTHING,
-                     1,
+                     FC_QP_ID, 1,
                      0, 0, 0, 0, false, false, 0, LEADER_MACHINE, 0, 0, 0,
                      "send credits", "recv nothing");
   ///
   create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_WRS, MAX_RECV_R_REP_WRS, SEND_UNI_REQ_RECV_LDR_REP, RECV_REPLY,
-                     1, 1,
+                     R_QP_ID, 1, 1,
                      R_CREDITS, R_REP_RECV_SIZE, R_SEND_SIZE, false, false, 0, LEADER_MACHINE, R_FIFO_SIZE,
                      R_CREDITS, R_MES_HEADER,
                      "send reads", "recv read_replies");
 }
 
-void rl_qp_meta_init(per_qp_meta_t *qp_meta)
-{
-  ///
-  create_per_qp_meta(&qp_meta[PREP_ACK_QP_ID], LDR_MAX_PREP_WRS,
-                     LDR_MAX_RECV_ACK_WRS, SEND_BCAST_LDR_RECV_UNI,  RECV_REPLY,
-                     FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_ACK_BUF_SLOTS,
-                     LDR_ACK_RECV_SIZE, LDR_PREP_SEND_SIZE, ENABLE_MULTICAST, false,
-                     PREP_MCAST_QP, LEADER_MACHINE, PREP_FIFO_SIZE,
-                     PREPARE_CREDITS, PREP_MES_HEADER,
-                     "send preps", "recv acks");
-  ///
-  create_per_qp_meta(&qp_meta[COMMIT_W_QP_ID], LDR_MAX_COM_WRS,
-                     LDR_MAX_RECV_W_WRS, SEND_BCAST_LDR_RECV_UNI, RECV_REQ,
-                     FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_W_BUF_SLOTS,
-                     LDR_W_RECV_SIZE, LDR_COM_SEND_SIZE, ENABLE_MULTICAST, false,
-                     COM_MCAST_QP, LEADER_MACHINE, COMMIT_FIFO_SIZE,
-                     COMMIT_CREDITS, LDR_COM_SEND_SIZE,
-                     "send commits", "recv writes");
-  ///
-  create_per_qp_meta(&qp_meta[FC_QP_ID], 0, LDR_MAX_CREDIT_RECV, RECV_CREDITS, RECV_REPLY,
-                     0, FOLLOWER_MACHINE_NUM, 0,
-                     0, 0, false, false,
-                     0, LEADER_MACHINE, 0, 0, 0,
-                     NULL, "recv credits");
-  ///
-  create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_REP_WRS, MAX_RECV_R_WRS, SEND_UNI_REP_LDR_RECV_UNI_REQ, RECV_REQ,
-                     FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_R_BUF_SLOTS,
-                     R_RECV_SIZE, R_REP_SEND_SIZE, false, false,
-                     0, LEADER_MACHINE, R_REP_FIFO_SIZE, 0, R_REP_MES_HEADER,
-                     "send r_Reps", "recv reads");
-}
 
 
 void zk_ldr_qp_meta_mfs(context_t *ctx)
@@ -303,8 +277,7 @@ void zk_init_flr_send_fifos(context_t *ctx)
 
 void zk_init_qp_meta(context_t *ctx)
 {
-  protocol_t protocol = USE_ROTATING_LEADERS ? ROTATING :
-                        machine_id == LEADER_MACHINE ? LEADER : FOLLOWER;
+  protocol_t protocol = machine_id == LEADER_MACHINE ? LEADER : FOLLOWER;
   per_qp_meta_t *qp_meta = ctx->qp_meta;
   switch (protocol) {
     case FOLLOWER:
@@ -330,13 +303,6 @@ void zk_init_qp_meta(context_t *ctx)
       zk_init_ldr_send_fifos(ctx);
       ctx_qp_meta_mirror_buffers(&qp_meta[PREP_ACK_QP_ID],
                                  FLR_PREP_BUF_SLOTS, FOLLOWER_MACHINE_NUM);
-
-
-      break;
-    case ROTATING:
-      rl_qp_meta_init(qp_meta);
-      //rl_qp_meta_mfs(ctx);
-      //rl_init_send_fifos(ctx);
       break;
     default: assert(false);
   }
@@ -347,8 +313,7 @@ void zk_init_qp_meta(context_t *ctx)
 // Set up a struct that stores pending writes
 zk_ctx_t *set_up_zk_ctx(context_t *ctx)
 {
-  protocol_t protocol = USE_ROTATING_LEADERS ? ROTATING :
-                        machine_id == LEADER_MACHINE ? LEADER : FOLLOWER;
+  protocol_t protocol = machine_id == LEADER_MACHINE ? LEADER : FOLLOWER;
   uint32_t i;
   zk_ctx_t* zk_ctx = (zk_ctx_t*) calloc(1,sizeof(zk_ctx_t));
   uint32_t size = protocol == LEADER ? LEADER_PENDING_WRITES : FLR_PENDING_WRITES;

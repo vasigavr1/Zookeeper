@@ -21,7 +21,7 @@
 #define USE_ROTATING_LEADERS 0
 #define MAKE_FOLLOWERS_PASSIVE 0
 #define ENABLE_GIDS 1 // should ldr tag writes with unique ids // this is useful for remote reads
-#define ENABLE_GID_ORDERING (ENABLE_GIDS ? 1 : 0) // should global write ordering occur
+#define ENABLE_GID_ORDERING (ENABLE_GIDS ? 0 : 0) // should global write ordering occur
 #define DISABLE_UPDATING_KVS 0
 #define USE_REMOTE_READS (ENABLE_GIDS ? 1 : 0)
 

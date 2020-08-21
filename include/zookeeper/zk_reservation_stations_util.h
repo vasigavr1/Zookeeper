@@ -246,39 +246,9 @@ static inline void ldr_poll_credits(context_t *ctx)
 
 
 
-
 /* ---------------------------------------------------------------------------
-//------------------------------ UNICASTS --------------------------------
+//------------------------------INSERTS --------------------------------
 //---------------------------------------------------------------------------*/
-//
-static inline void forge_unicast_wr(context_t *ctx,
-                                    uint16_t qp_id,
-                                    uint16_t mes_i)
-{
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
-  struct ibv_sge *send_sgl = qp_meta->send_sgl;
-  struct ibv_send_wr *send_wr = qp_meta->send_wr;
-
-  //printf("%u/%u \n", mes_i, MAX_R_REP_WRS);
-  send_sgl[mes_i].length = get_fifo_slot_meta_pull(qp_meta->send_fifo)->byte_size;
-  send_sgl[mes_i].addr = (uintptr_t) get_fifo_pull_slot(qp_meta->send_fifo);
-
-  if (qp_meta->receipient_num > 1) {
-    uint8_t rm_id = get_fifo_slot_meta_pull(qp_meta->send_fifo)->rm_id;
-    send_wr[mes_i].wr.ud.ah = rem_qp[rm_id][ctx->t_id][qp_id].ah;
-    send_wr[mes_i].wr.ud.remote_qpn = (uint32_t) rem_qp[rm_id][ctx->t_id][qp_id].qpn;
-  }
-
-
-  selective_signaling_for_unicast(&qp_meta->sent_tx, qp_meta->ss_batch, send_wr,
-                                  mes_i, qp_meta->send_cq, qp_meta->enable_inlining,
-                                  qp_meta->send_string, ctx->t_id);
-  // Have the last message point to the current message
-  if (mes_i > 0) send_wr[mes_i - 1].next = &send_wr[mes_i];
-
-}
-
-
 
 // Add the acked gid to the appropriate commit message
 static inline void zk_insert_commit(context_t *ctx,
@@ -303,9 +273,7 @@ static inline void zk_insert_commit(context_t *ctx,
 
 }
 
-/* ---------------------------------------------------------------------------
-//------------------------------INSERTS --------------------------------
-//---------------------------------------------------------------------------*/
+
 
 static inline void fill_prep(zk_prepare_t *prep, mica_key_t key, uint8_t opcode, uint8_t val_len,
                              uint8_t *value, uint8_t flr_id, uint16_t session_id)
@@ -358,7 +326,7 @@ static inline uint16_t fill_prepare_based_on_source(context_t *ctx,
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
   if (source_flag == LOCAL_PREP) {
     zk_trace_op_t *op = (zk_trace_op_t *) source;
-    fill_prep(prep, op->key, op->opcode, op->val_len, op->value,
+    fill_prep(prep, op->key, op->opcode, op->val_len, op->value_to_write,
               ctx->m_id, (uint16_t)  op->session_id);
     zk_ctx->index_to_req_array[op->session_id] = op->index_to_req_array;
     return op->session_id;
@@ -417,7 +385,7 @@ static inline void insert_write_help(context_t *ctx, void *w_ptr,
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
 
   zk_trace_op_t *op = (zk_trace_op_t *) source;
-  fill_write(write, op->key, op->opcode, op->val_len, op->value,
+  fill_write(write, op->key, op->opcode, op->val_len, op->value_to_write,
              ctx->m_id, op->session_id);
   zk_ctx->index_to_req_array[op->session_id] = op->index_to_req_array;
 
@@ -482,31 +450,6 @@ static inline void insert_read_help(context_t *ctx, void *r_ptr,
   fifo_incr_push_ptr(zk_ctx->r_rob);
 }
 
-
-
-static inline void insert_mes(context_t *ctx,
-                              uint16_t qp_id,
-                              uint32_t send_size,
-                              uint32_t recv_size,
-                              bool break_message,
-                              void* source,
-                              uint32_t source_flag)
-{
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
-  fifo_t* send_fifo = qp_meta->send_fifo;
-  void *ptr = get_send_fifo_ptr(send_fifo, send_size, recv_size,
-                                break_message, ctx->t_id);
-
-  qp_meta->mfs->insert_helper(ctx, ptr, source, source_flag);
-
-  slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
-
-
-  if (slot_meta->coalesce_num == 1)
-    fifo_incr_capacity(send_fifo);
-
-  fifo_incr_net_capacity(send_fifo);
-}
 
 
 /* ---------------------------------------------------------------------------

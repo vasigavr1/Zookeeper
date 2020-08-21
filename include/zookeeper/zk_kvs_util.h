@@ -13,26 +13,13 @@
 #include "zk_reservation_stations_util.h"
 
 
-static inline void KVS_local_read(mica_op_t *kv_ptr,
-                                  zk_trace_op_t *op,
-                                  zk_resp_t *resp,
-                                  uint16_t t_id)
-{
-  uint32_t debug_cntr = 0;
-  uint64_t tmp_lock = read_seqlock_lock_free(&kv_ptr->seqlock);
-  do {
-    debug_stalling_on_lock(&debug_cntr, "local read", t_id);
-    memcpy(op->value, kv_ptr->value, (size_t) VALUE_SIZE); //TODO change for clients
-  } while (!(check_seqlock_lock_free(&kv_ptr->seqlock, &tmp_lock)));
-  resp->type = KVS_LOCAL_GET_SUCCESS;
-}
 
-static inline void KVS_remote_read(zk_ctx_t *zk_ctx,
-                                   mica_op_t *kv_ptr,
-                                   zk_trace_op_t *op,
-                                   zk_resp_t *resp,
-                                   uint32_t *r_push_ptr_,
-                                   uint16_t t_id)
+static inline void zk_KVS_remote_read(zk_ctx_t *zk_ctx,
+                                      mica_op_t *kv_ptr,
+                                      zk_trace_op_t *op,
+                                      zk_resp_t *resp,
+                                      uint32_t *r_push_ptr_,
+                                      uint16_t t_id)
 {
   uint32_t r_push_ptr = *r_push_ptr_;
   r_rob_t *r_rob = (r_rob_t *) get_fifo_slot(zk_ctx->r_rob, r_push_ptr);
@@ -64,8 +51,7 @@ static inline void zk_KVS_batch_op_trace(zk_ctx_t *zk_ctx, uint16_t op_num,
                                          zk_trace_op_t *op, zk_resp_t *resp,
                                          uint16_t t_id)
 {
-  uint16_t op_i;	/* op_i is batch index */
-  long long stalled_brces = 0;
+  uint16_t op_i;
  if (ENABLE_ASSERTIONS) {
    assert(op != NULL);
    assert(op_num > 0 && op_num <= ZK_TRACE_BATCH);
@@ -99,11 +85,11 @@ static inline void zk_KVS_batch_op_trace(zk_ctx_t *zk_ctx, uint16_t op_num,
     }
     if (op[op_i].opcode == KVS_OP_GET ) {
       if (!USE_REMOTE_READS || machine_id == LEADER_MACHINE) {
-        KVS_local_read(kv_ptr[op_i], &op[op_i], &resp[op_i], t_id);
+        KVS_local_read(kv_ptr[op_i], op[op_i].value_to_read, &resp[op_i].type, t_id);
       }
       else {
-        KVS_remote_read(zk_ctx, kv_ptr[op_i], &op[op_i],
-                        &resp[op_i], &r_push_ptr, t_id);
+        zk_KVS_remote_read(zk_ctx, kv_ptr[op_i], &op[op_i],
+                           &resp[op_i], &r_push_ptr, t_id);
       }
 
     }
@@ -215,7 +201,7 @@ static inline void zk_KVS_batch_op_reads(context_t *ctx)
       assert(false);
     }
     if (read->opcode == KVS_OP_GET) {
-      insert_mes(ctx, R_QP_ID, R_REP_SMALL_SIZE, 0,
+      ctx_insert_mes(ctx, R_QP_ID, R_REP_SMALL_SIZE, 0,
                  !ptrs_to_r->coalesce_r_rep[op_i],
                  (void *) kv_ptr[op_i], op_i);
       //ldr_insert_r_rep(ctx, zk_ctx, kv_ptr[op_i], op_i);
