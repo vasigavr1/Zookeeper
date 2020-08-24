@@ -59,7 +59,7 @@ static inline void flr_increases_write_credits(context_t *ctx,
 static inline bool zk_write_not_ready(zk_com_mes_t *com,
                                       uint16_t com_ptr,
                                       uint16_t com_i,
-                                      uint16_t com_num,
+                                      uint32_t com_num,
                                       zk_ctx_t *zk_ctx,
                                       uint16_t t_id)
 {
@@ -71,7 +71,7 @@ static inline bool zk_write_not_ready(zk_com_mes_t *com,
   if (wrap_around) assert(com_ptr == zk_ctx->w_rob->pull_ptr);
   w_rob_t *w_rob = (w_rob_t *) get_fifo_slot(zk_ctx->w_rob, com_ptr);
 
-  if (wrap_around || w_rob->w_state != SENT) {
+  if (wrap_around || w_rob->w_state != VALID) {
     com->com_num -= com_i;
     com->l_id += com_i;
     if (ENABLE_STAT_COUNTING)  t_stats[t_id].received_coms += com_i;
@@ -122,7 +122,7 @@ flr_increase_counter_if_waiting_for_commit(zk_ctx_t *zk_ctx,
   w_rob_t * w_rob = (w_rob_t *) get_fifo_pull_slot(zk_ctx->w_rob);
   if (ENABLE_STAT_COUNTING) {
     if ((w_rob->g_id == committed_g_id + 1) &&
-        (w_rob->w_state == SENT))
+        (w_rob->w_state == VALID))
     t_stats[t_id].stalled_com_credit++;
   }
 }
@@ -498,35 +498,21 @@ static inline void zk_fill_trace_op(context_t *ctx,
 
 
 
-static inline void zk_increase_prep_credits(uint16_t *credits, zk_ack_mes_t *ack,
+static inline void zk_increase_prep_credits(uint16_t *credits, ack_mes_t *ack,
                                             struct fifo *remote_prep_buf, uint16_t t_id)
 {
-  uint8_t rm_id = (uint8_t) (ack->follower_id > LEADER_MACHINE ? ack->follower_id - 1 : ack->follower_id);
-  credits[ack->follower_id] +=
+  uint8_t rm_id = (uint8_t) (ack->m_id > LEADER_MACHINE ? ack->m_id - 1 : ack->m_id);
+  credits[ack->m_id] +=
     remove_from_the_mirrored_buffer(remote_prep_buf, ack->ack_num, t_id, rm_id, FLR_PREP_BUF_SLOTS);
 
   if (ENABLE_ASSERTIONS) {
-    if (credits[ack->follower_id] > PREPARE_CREDITS)
-      my_printf(red, "Prepare credits %u for follower %u \n", credits[ack->follower_id], ack->follower_id);
+    if (credits[ack->m_id] > PREPARE_CREDITS)
+      my_printf(red, "Prepare credits %u for follower %u \n", credits[ack->m_id], ack->m_id);
   }
 }
 
-static inline uint32_t zk_find_the_first_prepare_that_gets_acked(uint16_t *ack_num,
-                                                                 uint64_t l_id, zk_ctx_t *zk_ctx,
-                                                                 uint64_t pull_lid, uint16_t t_id)
-{
 
-  if (pull_lid >= l_id) {
-    (*ack_num) -= (pull_lid - l_id);
-    if (ENABLE_ASSERTIONS) assert(*ack_num > 0 && *ack_num <= FLR_PENDING_WRITES);
-    return zk_ctx->w_rob->pull_ptr;
-  }
-  else { // l_id > pull_lid
-    return (uint32_t) (zk_ctx->w_rob->pull_ptr + (l_id - pull_lid)) % LEADER_PENDING_WRITES;
-  }
-}
-
-static inline void zk_apply_acks(uint16_t ack_num, uint32_t ack_ptr,
+static inline void zk_apply_acks(uint32_t ack_num, uint32_t ack_ptr,
                                  uint64_t l_id, zk_ctx_t *zk_ctx,
                                  uint64_t pull_lid, uint32_t *outstanding_prepares,
                                  uint16_t t_id)

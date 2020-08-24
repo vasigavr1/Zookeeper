@@ -105,49 +105,6 @@ static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
 //------------------------------UNICASTS -----------------------------
 //---------------------------------------------------------------------------*/
 
-// Send a batched ack that denotes the first local write id and the number of subsequent lid that are being acked
-static inline void send_acks_to_ldr(context_t *ctx)
-{
-  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-  p_acks_t *p_acks = zk_ctx->p_acks;
-  zk_ack_mes_t *ack = zk_ctx->ack;
-  if (p_acks->acks_to_send == 0) return;
-  struct ibv_send_wr *bad_send_wr;
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[PREP_ACK_QP_ID];
-  ack->ack_num = (uint16_t) p_acks->acks_to_send;
-  uint64_t l_id_to_send = zk_ctx->local_w_id + p_acks->slots_ahead;
-  for (uint32_t i = 0; i < ack->ack_num; i++) {
-    uint16_t w_ptr = (uint16_t) (zk_ctx->w_rob->pull_ptr + p_acks->slots_ahead + i);
-    w_rob_t *w_rob = (w_rob_t *) get_fifo_slot_mod(zk_ctx->w_rob, w_ptr);
-    if (ENABLE_ASSERTIONS) assert(w_rob->w_state == VALID);
-    w_rob->w_state = SENT;
-  }
-  ack->l_id = l_id_to_send;
-  p_acks->slots_ahead += p_acks->acks_to_send;
-  p_acks->acks_to_send = 0;
-  qp_meta->send_sgl->addr = (uint64_t) (uintptr_t) ack;
-  if (ENABLE_ASSERTIONS) {
-    assert(ack->follower_id == ctx->m_id);
-    assert(qp_meta->send_wr->sg_list == qp_meta->send_sgl);
-    assert(qp_meta->send_sgl->length == FLR_ACK_SEND_SIZE);
-  }
-  check_stats_prints_when_sending_acks(ack, zk_ctx, p_acks, l_id_to_send, ctx->t_id);
-  selective_signaling_for_unicast(&qp_meta->sent_tx, ACK_SEND_SS_BATCH, qp_meta->send_wr,
-                                  0, qp_meta->send_cq, true,
-                                  "sending acks", ctx->t_id);
-  // RECEIVES for prepares
-  uint32_t posted_recvs = qp_meta->recv_info->posted_recvs;
-  uint32_t recvs_to_post_num = FLR_MAX_RECV_PREP_WRS - posted_recvs;
-  if (recvs_to_post_num > 0) {
-    post_recvs_with_recv_info(qp_meta->recv_info, recvs_to_post_num);
-    checks_and_prints_posting_recvs_for_preps(qp_meta->recv_info, recvs_to_post_num, ctx->t_id);
-  }
-  // SEND the ack
-  int ret = ibv_post_send(qp_meta->send_qp, &qp_meta->send_wr[0], &bad_send_wr);
-  CPE(ret, "ACK ibv_post_send error", ret);
-}
-
-
 //Send credits for the commits
 static inline void send_credits_for_commits(context_t *ctx,
                                             uint16_t credit_num)
@@ -246,14 +203,8 @@ static inline void propagate_updates(context_t *ctx)
     if (zk_ctx->protocol == FOLLOWER) {
       remove_from_the_mirrored_buffer(prep_buf_mirror, update_op_i,
                                       ctx->t_id, 0, FLR_PREP_BUF_SLOTS);
-      if (ENABLE_ASSERTIONS)
-        assert(zk_ctx->p_acks->slots_ahead >= update_op_i);
-      zk_ctx->p_acks->slots_ahead -= update_op_i;
-
     }
-    else {
-      zk_insert_commit(ctx, update_op_i);
-    }
+    else zk_insert_commit(ctx, update_op_i);
 
     zk_ctx->local_w_id += update_op_i; // this must happen after inserting commits
     fifo_decrease_capacity(zk_ctx->w_rob, update_op_i);
@@ -309,9 +260,9 @@ static inline bool ack_handler(context_t *ctx)
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[PREP_ACK_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
-  volatile zk_ack_mes_ud_t *incoming_acks = (volatile zk_ack_mes_ud_t *) recv_fifo->fifo;
-  zk_ack_mes_t *ack = (zk_ack_mes_t *) &incoming_acks[recv_fifo->pull_ptr].ack;
-  uint16_t ack_num = ack->ack_num;
+  volatile ack_mes_ud_t *incoming_acks = (volatile ack_mes_ud_t *) recv_fifo->fifo;
+  ack_mes_t *ack = (ack_mes_t *) &incoming_acks[recv_fifo->pull_ptr].ack;
+  uint32_t ack_num = ack->ack_num;
   uint64_t l_id = ack->l_id;
   uint64_t pull_lid = zk_ctx->local_w_id; // l_id at the pull pointer
   uint32_t ack_ptr; // a pointer in the FIFO, from where ack should be added
@@ -322,7 +273,7 @@ static inline bool ack_handler(context_t *ctx)
     return true;
 
   zk_check_ack_l_id_is_small_enough(ack_num, l_id, zk_ctx, pull_lid, ctx->t_id);
-  ack_ptr = zk_find_the_first_prepare_that_gets_acked(&ack_num, l_id, zk_ctx, pull_lid, ctx->t_id);
+  ack_ptr = ctx_find_when_the_ack_points_acked(ack, zk_ctx->w_rob, pull_lid, &ack_num);
 
   // Apply the acks that refer to stored writes
   zk_apply_acks(ack_num, ack_ptr, l_id, zk_ctx, pull_lid,
@@ -468,7 +419,9 @@ static inline bool prepare_handler(context_t *ctx)
   zk_check_polled_prep_and_print(prep_mes, zk_ctx, coalesce_num, recv_fifo->pull_ptr,
                                  incoming_l_id, expected_l_id, incoming_preps, ctx->t_id);
 
-  zk_ctx->p_acks->acks_to_send+= coalesce_num; // lids are in order so ack them
+  //zk_ctx->p_acks->acks_to_send+= coalesce_num; // lids are in order so ack them
+  ctx_ack_insert(ctx, PREP_ACK_QP_ID, coalesce_num,  incoming_l_id, LEADER_MACHINE);
+
   add_to_the_mirrored_buffer(qp_meta->mirror_remote_recv_fifo,
                              coalesce_num, 1, ctx->q_info);
   ///Loop through prepares inside the message
@@ -492,7 +445,7 @@ static inline bool commit_handler(context_t *ctx)
   volatile zk_com_mes_ud_t *incoming_coms = (volatile zk_com_mes_ud_t *) recv_fifo->fifo;
 
   zk_com_mes_t *com = (zk_com_mes_t *) &incoming_coms[recv_fifo->pull_ptr].com;
-  uint16_t com_num = com->com_num;
+  uint32_t com_num = com->com_num;
   uint64_t l_id = com->l_id;
   uint64_t pull_lid = zk_ctx->local_w_id; // l_id at the pull pointer
   zk_check_polled_commit_and_print(com, zk_ctx, recv_fifo->pull_ptr,
@@ -602,7 +555,8 @@ static inline void flr_main_loop(context_t *ctx)
 
   ctx_poll_incoming_messages(ctx, PREP_ACK_QP_ID);
 
-  send_acks_to_ldr(ctx);
+  //send_acks_to_ldr(ctx);
+  ctx_send_acks(ctx, PREP_ACK_QP_ID);
 
 
   ctx_poll_incoming_messages(ctx, COMMIT_W_QP_ID);

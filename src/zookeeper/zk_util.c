@@ -16,8 +16,8 @@ void zk_print_parameters_in_the_start()
               sizeof(zk_com_mes_t), LDR_COM_SEND_SIZE,
               sizeof(zk_com_mes_ud_t), FLR_COM_RECV_SIZE);
     my_printf(cyan, "ACK: ack message %lu/%d, ack message ud req %llu/%d\n",
-              sizeof(zk_ack_mes_t), FLR_ACK_SEND_SIZE,
-              sizeof(zk_ack_mes_ud_t), LDR_ACK_RECV_SIZE);
+              sizeof(ack_mes_t), FLR_ACK_SEND_SIZE,
+              sizeof(ack_mes_ud_t), LDR_ACK_RECV_SIZE);
     my_printf(yellow, "PREPARE: prepare %lu/%d, prep message %lu/%d, prep message ud req %llu/%d\n",
               sizeof(zk_prepare_t), PREP_SIZE,
               sizeof(zk_prep_mes_t), LDR_PREP_SEND_SIZE,
@@ -57,7 +57,7 @@ void zk_static_assert_compile_parameters()
   assert(LEADERS_PER_MACHINE == FOLLOWERS_PER_MACHINE); // hopefully temporary restriction
   assert((W_CREDITS % LDR_CREDIT_DIVIDER) == 0); // division better be perfect
   assert((COMMIT_CREDITS % FLR_CREDIT_DIVIDER) == 0); // division better be perfect
-  assert(sizeof(zk_ack_mes_ud_t) == LDR_ACK_RECV_SIZE);
+  assert(sizeof(ack_mes_ud_t) == LDR_ACK_RECV_SIZE);
   assert(sizeof(zk_com_mes_ud_t) == FLR_COM_RECV_SIZE);
   assert(sizeof(zk_prep_mes_ud_t) == FLR_PREP_RECV_SIZE);
   assert(sizeof(zk_w_mes_ud_t) == LDR_W_RECV_SIZE);
@@ -165,7 +165,7 @@ void zk_flr_qp_meta_init(per_qp_meta_t *qp_meta)
                      PREP_ACK_QP_ID,
                      1, 1, 3 * PREPARE_CREDITS,
                      FLR_PREP_RECV_SIZE, FLR_ACK_SEND_SIZE, false, ENABLE_MULTICAST, PREP_MCAST_QP,
-                     LEADER_MACHINE, 0, 0, 0, "send acks", "recv preps");
+                     LEADER_MACHINE, ACK_SEND_BUF_SIZE, 0, 0, "send acks", "recv preps");
   ///
   create_per_qp_meta(&qp_meta[COMMIT_W_QP_ID], FLR_MAX_W_WRS,
                      FLR_MAX_RECV_COM_WRS, SEND_UNI_REP_RECV_LDR_BCAST, RECV_SEC_ROUND,
@@ -273,6 +273,13 @@ void zk_init_flr_send_fifos(context_t *ctx)
       r_mes[i].m_id = ctx->m_id;
     }
   }
+  per_qp_meta_t *prep_ack_qp_meta = &ctx->qp_meta[PREP_ACK_QP_ID];
+  ack_mes_t * acks = (ack_mes_t *) prep_ack_qp_meta->send_fifo->fifo; //calloc(1, sizeof(ack_mes_t));
+  for (int m_id = 0; m_id < prep_ack_qp_meta->send_wr_num; ++m_id) {
+    acks[m_id].opcode = OP_ACK;
+    acks[m_id].m_id = ctx->m_id;
+    prep_ack_qp_meta->send_sgl[m_id].addr = (uintptr_t) &acks[m_id];
+  }
 }
 
 void zk_init_qp_meta(context_t *ctx)
@@ -313,6 +320,7 @@ void zk_init_qp_meta(context_t *ctx)
 // Set up a struct that stores pending writes
 zk_ctx_t *set_up_zk_ctx(context_t *ctx)
 {
+  per_qp_meta_t *prep_ack_qp_meta = &ctx->qp_meta[PREP_ACK_QP_ID];
   protocol_t protocol = machine_id == LEADER_MACHINE ? LEADER : FOLLOWER;
   uint32_t i;
   zk_ctx_t* zk_ctx = (zk_ctx_t*) calloc(1,sizeof(zk_ctx_t));
@@ -342,10 +350,6 @@ zk_ctx_t *set_up_zk_ctx(context_t *ctx)
 
   }
   else { // PROTOCOL == FOLLOWER
-    zk_ctx->ack = (zk_ack_mes_t *) calloc(1, sizeof(zk_ack_mes_t));
-    zk_ctx->ack->opcode = KVS_OP_ACK;
-    zk_ctx->ack->follower_id = ctx->m_id;
-    zk_ctx->p_acks = (p_acks_t *) calloc(1, sizeof(p_acks_t));
     zk_ctx->r_rob = fifo_constructor(FLR_PENDING_READS, sizeof(r_rob_t), false, 0, 1);
   }
 

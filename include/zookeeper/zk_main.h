@@ -52,9 +52,7 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 #define LDR_QUORUM_OF_ACKS (USE_QUORUM == 1 ? (QUORUM_NUM - 1): FOLLOWER_MACHINE_NUM) //FOLLOWER_MACHINE_NUM //
 
 
-#define ACK_SIZE 12
-#define COM_ACK_HEADER_SIZE 4 // follower id, opcode, coalesce_num
-#define FLR_ACK_SEND_SIZE (12) // a local global id and its metadata
+#define FLR_ACK_SEND_SIZE (16) // a local id and its metadata
 #define LDR_ACK_RECV_SIZE (GRH_SIZE + (FLR_ACK_SEND_SIZE))
 
 
@@ -175,8 +173,9 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 
 //--------FOLLOWER--------------
 // // PREP_ACK_QP_ID 0: receive Prepares -- send ACKs
-#define FLR_MAX_ACK_WRS (1)
+#define FLR_MAX_ACK_WRS (2)
 #define FLR_MAX_RECV_PREP_WRS (3 * PREPARE_CREDITS) // if not enough prep messges get lost
+#define ACK_SEND_BUF_SIZE (2)
 // COMMIT_W_QP_ID 1: send Writes  -- receive Commits
 #define FLR_MAX_W_WRS (W_CREDITS)
 #define FLR_MAX_RECV_COM_WRS (COMMIT_CREDITS)
@@ -274,20 +273,6 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 typedef enum op_state {INVALID, VALID, SENT, READY, SEND_COMMITTS} w_state_t;
 
 
-// The format of an ack message
-typedef struct zk_ack_message {
-	uint64_t l_id; // the first local id that is being acked
-  uint8_t follower_id;
-  uint8_t opcode;
-  uint16_t ack_num;
-} __attribute__((__packed__)) zk_ack_mes_t;
-
-
-typedef struct zk_ack_message_ud_req {
-	uint8_t grh[GRH_SIZE];
-  zk_ack_mes_t ack;
-} zk_ack_mes_ud_t;
-
 
 // The format of a commit message
 typedef struct com_message {
@@ -306,7 +291,7 @@ typedef struct zk_prepare {
 	uint8_t flr_id;
 	uint8_t val_len;
   uint16_t sess_id;
-	uint64_t g_id; //send the bottom half of the gid
+	uint64_t g_id;
 	mica_key_t key;
 	uint8_t opcode; //override opcode
 	uint8_t value[VALUE_SIZE];
@@ -406,17 +391,6 @@ struct zk_r_message_template {
 
 
 
-
-
-
-
-
-// struct for the follower to keep track of the acks it has sent
-typedef struct pending_acks {
-  uint32_t slots_ahead;
-  uint32_t acks_to_send;
-} p_acks_t;
-
 typedef struct ptrs_to_reads {
 	uint16_t polled_reads;
 	zk_read_t **ptr_to_ops;
@@ -484,9 +458,6 @@ typedef struct zk_ctx {
 	ptrs_to_r_t *ptrs_to_r;
 	uint64_t local_w_id;
   uint64_t local_r_id;
-
-  p_acks_t *p_acks;
-	zk_ack_mes_t *ack;
 
 	uint32_t unordered_ptr;
   uint64_t highest_g_id_taken;

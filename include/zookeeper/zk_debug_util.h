@@ -188,18 +188,18 @@ static inline void check_ldr_p_states(context_t *ctx)
 //------------------------------ POLLNG ACKS -----------------------------
 //---------------------------------------------------------------------------*/
 
-static inline void zk_check_polled_ack_and_print(zk_ack_mes_t *ack, uint16_t ack_num,
+static inline void zk_check_polled_ack_and_print(ack_mes_t *ack, uint32_t ack_num,
                                                  uint64_t pull_lid, uint32_t buf_ptr, uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
-    assert (ack->opcode == KVS_OP_ACK);
+    assert (ack->opcode == OP_ACK);
     assert(ack_num > 0 && ack_num <= FLR_PENDING_WRITES);
-    assert(ack->follower_id < MACHINE_NUM);
-    assert(ack->follower_id != machine_id);
+    assert(ack->m_id < MACHINE_NUM);
+    assert(ack->m_id != machine_id);
   }
   if (DEBUG_ACKS)
     my_printf(yellow, "Leader %d ack opcode %d with %d acks for l_id %lu, oldest lid %lu, at offset %d from flr %u \n",
-              t_id, ack->opcode, ack_num, ack->l_id, pull_lid, buf_ptr, ack->follower_id);
+              t_id, ack->opcode, ack_num, ack->l_id, pull_lid, buf_ptr, ack->m_id);
   if (ENABLE_STAT_COUNTING) {
     t_stats[t_id].received_acks += ack_num;
     t_stats[t_id].received_acks_mes_num++;
@@ -207,7 +207,7 @@ static inline void zk_check_polled_ack_and_print(zk_ack_mes_t *ack, uint16_t ack
 
 }
 
-static inline void zk_check_ack_l_id_is_small_enough(uint16_t ack_num,
+static inline void zk_check_ack_l_id_is_small_enough(uint32_t ack_num,
                                                      uint64_t l_id, zk_ctx_t *zk_ctx,
                                                      uint64_t pull_lid, uint16_t t_id)
 {
@@ -252,7 +252,7 @@ static inline void zk_check_polled_commit_and_print(zk_com_mes_t *com,
                                                     uint32_t buf_ptr,
                                                     uint64_t l_id,
                                                     uint64_t pull_lid,
-                                                    uint16_t com_num,
+                                                    uint32_t com_num,
                                                     uint16_t t_id)
 {
   if (DEBUG_COMMITS)
@@ -290,10 +290,9 @@ static inline void zk_checks_after_polling_commits(uint32_t *dbg_counter,
 
 
 static inline void zk_increment_wait_for_preps_cntr(zk_ctx_t *zk_ctx,
-                                                    p_acks_t *p_acks,
                                                     uint32_t *wait_for_prepares_dbg_counter)
 {
-  if (ENABLE_ASSERTIONS && p_acks->acks_to_send == 0 && zk_ctx->w_rob->capacity == 0)
+  if (ENABLE_ASSERTIONS && zk_ctx->w_rob->capacity == 0)
     (*wait_for_prepares_dbg_counter)++;
 }
 
@@ -357,14 +356,14 @@ static inline void zk_checks_after_polling_prepares(zk_ctx_t *zk_ctx,
                                                     uint32_t *wait_for_prepares_dbg_counter,
                                                     uint32_t polled_messages,
                                                     recv_info_t *prep_recv_info,
-                                                    p_acks_t *p_acks, uint16_t t_id)
+                                                    uint16_t t_id)
 {
 
 
   if (polled_messages > 0) {
     if (ENABLE_ASSERTIONS) (*wait_for_prepares_dbg_counter) = 0;
   }
-  if (ENABLE_STAT_COUNTING && p_acks->acks_to_send == 0 && zk_ctx->w_rob->capacity == 0) t_stats[t_id].stalled_ack_prep++;
+  if (ENABLE_STAT_COUNTING && zk_ctx->w_rob->capacity == 0) t_stats[t_id].stalled_ack_prep++;
   if (ENABLE_ASSERTIONS) assert(prep_recv_info->posted_recvs >= polled_messages);
   if (ENABLE_ASSERTIONS) assert(prep_recv_info->posted_recvs <= FLR_MAX_RECV_PREP_WRS);
 }
@@ -451,14 +450,13 @@ static inline void zk_checks_and_stats_on_bcasting_commits(fifo_t *send_fifo,
 //---------------------------------------------------------------------------*/
 
 
-static inline void check_stats_prints_when_sending_acks(zk_ack_mes_t *ack,
+static inline void check_stats_prints_when_sending_acks(ack_mes_t *ack,
                                                         zk_ctx_t *zk_ctx,
-                                                        p_acks_t *p_acks,
                                                         uint64_t l_id_to_send, uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
     assert(ack->l_id == l_id_to_send);
-    assert (p_acks->slots_ahead <= zk_ctx->w_rob->capacity);
+    //assert (p_acks->slots_ahead <= zk_ctx->w_rob->capacity);
   }
   if (ENABLE_STAT_COUNTING) {
     t_stats[t_id].acks_sent += ack->ack_num;
@@ -467,7 +465,7 @@ static inline void check_stats_prints_when_sending_acks(zk_ack_mes_t *ack,
 
   if (DEBUG_ACKS)
     my_printf(yellow, "Flr %d is sending an ack for lid %lu and ack num %d and flr id %d, zk_ctx capacity %u/%d \n",
-              t_id, l_id_to_send, ack->ack_num, ack->follower_id, zk_ctx->w_rob->capacity, FLR_PENDING_WRITES);
+              t_id, l_id_to_send, ack->ack_num, ack->m_id, zk_ctx->w_rob->capacity, FLR_PENDING_WRITES);
   if (ENABLE_ASSERTIONS) assert(ack->ack_num > 0 && ack->ack_num <= FLR_PENDING_WRITES);
 }
 
