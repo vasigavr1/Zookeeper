@@ -122,6 +122,7 @@ static inline void dr_propagate_updates(context_t *ctx)
     if (w_rob->w_state != READY) break;
 
 
+    
 
   }
 
