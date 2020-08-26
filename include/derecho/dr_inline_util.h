@@ -118,7 +118,7 @@ static inline void dr_propagate_updates(context_t *ctx)
   while(!get_g_id_rob_pull(dr_ctx)->empty) {
     w_rob_t *w_rob = get_w_rob_from_g_rob_pull(dr_ctx);
     gid_rob_t *gid_rob = get_g_id_rob_pull(dr_ctx);
-    if (ctx->m_id == 0) print_g_id_rob(ctx, gid_rob->rob_id);
+    //if (ctx->m_id == 0) print_g_id_rob(ctx, gid_rob->rob_id);
     check_state_with_allowed_flags(4, w_rob->w_state, VALID, SENT, READY);
     if (w_rob->w_state != READY) break;
     check_when_waiting_for_gid(ctx, w_rob, committed_g_id);
@@ -142,36 +142,6 @@ static inline void dr_propagate_updates(context_t *ctx)
     dr_ctx->committed_w_id += update_op_i;
     dr_KVS_batch_op_updates(ptrs_to_w_rob, update_op_i);
   }
-
-  //while(((w_rob_t *) get_fifo_pull_slot(dr_ctx->loc_w_rob_ptr))->w_state == READY) {
-  //  if (!is_expected_g_id_ready(dr_ctx, &committed_g_id, &update_op_i,
-  //                              ctx->t_id))
-  //    break;
-  //}
-  //
-  //if (update_op_i > 0) {
-  //  if (dr_ctx->protocol == FOLLOWER) {
-  //    remove_from_the_mirrored_buffer(prep_buf_mirror, update_op_i,
-  //                                    ctx->t_id, 0, FLR_PREP_BUF_SLOTS);
-  //    if (ENABLE_ASSERTIONS)
-  //      assert(dr_ctx->p_acks->slots_ahead >= update_op_i);
-  //    dr_ctx->p_acks->slots_ahead -= update_op_i;
-  //
-  //  }
-  //  else {
-  //    dr_insert_commit(ctx, update_op_i);
-  //  }
-  //
-  //  dr_ctx->committed_w_id += update_op_i; // this must happen after inserting commits
-  //  fifo_decrease_capacity(dr_ctx->loc_w_rob_ptr, update_op_i);
-  //  dr_KVS_batch_op_updates((uint16_t) update_op_i, dr_ctx, starting_pull_ptr,
-  //                          ctx->t_id);
-  //
-  //  if (ENABLE_GIDS)
-  //    atomic_store_explicit(&committed_global_w_id, committed_g_id, memory_order_relaxed);
-  //  dr_signal_completion_and_bookkeep_for_writes(dr_ctx, update_op_i, starting_pull_ptr,
-  //                                               dr_ctx->protocol, ctx->t_id);
-  //}
 }
 
 

@@ -169,14 +169,15 @@ static inline void reset_gid_rob(context_t *ctx)
   bool last = gid_rob->first_valid == GID_ROB_SIZE - 1;
   bool last_valid = !gid_rob->valid[gid_rob->first_valid];
 
+  gid_rob->valid[gid_rob->first_valid] = false;
+
   if (last || last_valid) {
     gid_rob->empty = true;
     if (ENABLE_ASSERTIONS) assert(gid_rob_is_empty(gid_rob));
     gid_rob->first_valid = 0;
-    gid_rob->base_gid += G_ID_BASE_JUMP;
+
   }
   else {
-    gid_rob->valid[gid_rob->first_valid] = false;
     gid_rob->first_valid++;
     if (ENABLE_ASSERTIONS) {
       assert(gid_rob->first_valid < GID_ROB_SIZE);
@@ -185,6 +186,7 @@ static inline void reset_gid_rob(context_t *ctx)
   }
 
   if (last) {
+    gid_rob->base_gid += G_ID_BASE_JUMP;
     MOD_INCR(dr_ctx->gid_rob_arr->pull_ptr, GID_ROB_NUM);
     //if (get_g_id_rob_pull(dr_ctx)->empty) {
     //  assert(all_gid_robs_are_empty(dr_ctx));
