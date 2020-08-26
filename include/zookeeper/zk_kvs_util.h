@@ -123,7 +123,7 @@ static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_ctx_t *zk_ctx,
 
   for(op_i = 0; op_i < op_num; op_i++) {
     w_rob_t *w_rob = (w_rob_t *) get_fifo_slot_mod(zk_ctx->w_rob, pull_ptr+ op_i);
-    zk_prepare_t *op = w_rob->ptr_to_op; //preps[(pull_ptr + op_i) % max_op_size];
+    zk_prepare_t *op = w_rob->ptr_to_op;
     KVS_locate_one_bucket(op_i, bkt, &op->key, bkt_ptr, tag, kv_ptr, KVS);
   }
   KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
@@ -131,7 +131,6 @@ static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_ctx_t *zk_ctx,
   for(op_i = 0; op_i < op_num; op_i++) {
     w_rob_t *w_rob = (w_rob_t *) get_fifo_slot_mod(zk_ctx->w_rob, pull_ptr + op_i);
     zk_prepare_t *op = w_rob->ptr_to_op;
-    //zk_prepare_t *op = preps[(pull_ptr + op_i) % max_op_size];
     if (ENABLE_ASSERTIONS && kv_ptr[op_i] == NULL) {
       my_printf(red, "Kptr  is null %u\n", op_i);
       cust_print_key("Op", &op->key);

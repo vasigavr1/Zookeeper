@@ -12,11 +12,12 @@
 void dr_stats(stats_ctx_t *ctx);
 
 #define USE_REMOTE_READS 0
+#define DISABLE_UPDATING_KVS 0
 
 #define USE_QUORUM 1
 
 
-#define DR_TRACE_BATCH SESSIONS_PER_THREAD
+
 ///Static Partitioning of g_ids
 #define PER_THREAD_G_ID_BATCH SESSIONS_PER_THREAD
 #define PER_MACHINE_G_ID_BATCH (WORKERS_PER_MACHINE * PER_THREAD_G_ID_BATCH)
@@ -28,9 +29,11 @@ void dr_stats(stats_ctx_t *ctx);
 
 #define PREP_MCAST_QP 0
 
-#define REMOTE_W_SLOTS (2 * REM_MACH_NUM * PREP_CREDITS * PREP_COALESCE)
-#define DR_PENDING_WRITES ((SESSIONS_PER_THREAD + 1) + REMOTE_W_SLOTS)
+//#define REMOTE_W_SLOTS (2 * REM_MACH_NUM * PREP_CREDITS * PREP_COALESCE)
+#define DR_PENDING_WRITES ((SESSIONS_PER_THREAD + 1))
 
+#define DR_TRACE_BATCH SESSIONS_PER_THREAD
+#define DR_UPDATE_BATCH (DR_PENDING_WRITES * MACHINE_NUM)
 
 /*------------------------------------------------
  * ----------------KVS----------------------------
@@ -86,14 +89,17 @@ typedef enum {NOT_USED, LOCAL_PREP, REMOTE_WRITE} source_t;
 //} ptrs_to_r_t;
 
 typedef struct w_rob {
-  uint16_t session_id;
   uint64_t g_id;
+  uint16_t session_id;
+
   w_state_t w_state;
   uint8_t m_id;
   uint8_t acks_seen;
   //uint32_t index_to_req_array;
   bool is_local;
   dr_prepare_t *ptr_to_op;
+  mica_key_t key;
+  uint8_t value[VALUE_SIZE];
 
 } w_rob_t;
 
@@ -114,8 +120,10 @@ typedef struct r_rob {
 
 #define GID_ROB_NUM (MACHINE_NUM * 5)
 #define GID_ROB_SIZE (PER_THREAD_G_ID_BATCH)
+#define W_ROB_SIZE (GID_ROB_NUM * GID_ROB_SIZE)
+#define G_ID_BASE_JUMP (GID_ROB_NUM * PER_MACHINE_G_ID_BATCH)
 typedef struct gid_rob {
-  uint32_t *w_rob_ptr;
+  w_rob_t **w_rob;
   bool *valid;
   uint64_t base_gid;
   uint32_t rob_id;
@@ -126,14 +134,17 @@ typedef struct gid_rob {
 typedef struct g_id_rob_array {
   gid_rob_t *gid_rob;
   uint32_t pull_ptr;
-  bool empty;
+  //bool empty;
 } gid_rob_arr_t;
 
 // A data structute that keeps track of the outstanding writes
 typedef struct dr_ctx {
   // reorder buffers
   //fifo_t *r_rob;
-  fifo_t *w_rob;
+  /// This is a fifo of ptrs pointing to the local writes inside the w_rob,
+  /// which is not a fifo
+  fifo_t *loc_w_rob_ptr;
+  w_rob_t *w_rob;
   gid_rob_arr_t *gid_rob_arr;
 
 

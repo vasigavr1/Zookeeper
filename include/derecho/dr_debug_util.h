@@ -29,10 +29,11 @@ static inline void print_g_id_entry(context_t *ctx,
   assert(entry_i < GID_ROB_SIZE);
   dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
   gid_rob_t *gid_rob = &dr_ctx->gid_rob_arr->gid_rob[rob_id];
-  uint32_t w_ptr = gid_rob->w_rob_ptr[entry_i];
-  w_rob_t* w_rob = get_fifo_slot(dr_ctx->w_rob, w_ptr);
-  my_printf(cyan, "Entry %u: %s ---> %u (state %s, g_id %lu)",
+  uint32_t w_ptr = get_w_rob_slot(gid_rob, (uint64_t) entry_i);
+  w_rob_t* w_rob = get_w_rob_ptr(dr_ctx, gid_rob, (uint64_t) entry_i);
+  my_printf(cyan, "Entry %u: %s ---> %u (state %s, g_id %lu) \n",
             entry_i, gid_rob->valid[entry_i] ? "Valid" : "Invalid",
+            get_w_rob_slot(gid_rob, (uint64_t) entry_i),
             dr_w_state_to_str(w_rob->w_state), w_rob->g_id);
 }
 
@@ -41,9 +42,9 @@ static inline void print_g_id_rob(context_t *ctx, uint32_t rob_id)
   assert(rob_id < GID_ROB_NUM);
   dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
   gid_rob_t *gid_rob = &dr_ctx->gid_rob_arr->gid_rob[rob_id];
-  my_printf(cyan, "~~~~~~~Gid_rob %u~~~~~~~~~", gid_rob->rob_id);
-  my_printf(cyan, "Ranging from %lu to %lu", gid_rob->base_gid, gid_rob->base_gid + GID_ROB_SIZE);
-  for (int i = 0; i < GID_ROB_SIZE; ++i) {
+  my_printf(cyan, "~~~~~~~Gid_rob %u~~~~~~~~~\n", gid_rob->rob_id);
+  my_printf(cyan, "Ranging from %lu to %lu\n", gid_rob->base_gid, gid_rob->base_gid + GID_ROB_SIZE);
+  for (uint32_t i = 0; i < GID_ROB_SIZE; ++i) {
     print_g_id_entry(ctx, rob_id, i);
   }
 
@@ -61,7 +62,7 @@ static inline void print_all_gid_robs(context_t *ctx)
 static inline void print_gid_rob_with_gid(context_t *ctx,
                                           uint64_t g_id)
 {
-  print_g_id_rob(ctx, get_g_id_rob(ctx, g_id));
+  print_g_id_rob(ctx, get_g_id_rob_id(ctx, g_id));
 }
 
 
@@ -124,14 +125,11 @@ static inline void dr_check_prepare_and_print(context_t *ctx,
     dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
     dr_prepare_t *prepare = &prep_mes->prepare[prep_i];
     assert(prepare->g_id >= committed_global_w_id);
-    //assert(prepare->val_len == VALUE_SIZE >> SHIFT_BITS);
-    assert(((w_rob_t *) get_fifo_push_slot(dr_ctx->w_rob))->w_state == INVALID);
-
 
     if (DEBUG_PREPARES)
       my_printf(green, "Wrkr %u, prep_i %u new write at "
                   "ptr %u with g_id %lu and m_id %u \n",
-                ctx->t_id, prep_i, dr_ctx->w_rob->push_ptr,
+                ctx->t_id, prep_i, dr_ctx->loc_w_rob_ptr->push_ptr,
                 prepare->g_id, prep_mes->m_id);
   }
 }
@@ -143,7 +141,7 @@ static inline void dr_check_ack_l_id_is_small_enough(context_t *ctx,
   if (ENABLE_ASSERTIONS) {
     dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
     uint64_t pull_lid = dr_ctx->committed_w_id;
-    assert(ack->l_id + ack->ack_num <= pull_lid + dr_ctx->w_rob->capacity);
+    assert(ack->l_id + ack->ack_num <= pull_lid + dr_ctx->loc_w_rob_ptr->capacity);
     if ((ack->l_id + ack->ack_num < pull_lid) && (!USE_QUORUM)) {
       my_printf(red, "l_id %u, ack_num %u, pull_lid %u \n", ack->l_id, ack->ack_num, pull_lid);
       assert(false);
@@ -165,6 +163,27 @@ dr_increase_counter_if_waiting_for_commit(dr_ctx_t *dr_ctx,
     if ((gid_rob->base_gid == committed_g_id) &&
         (w_rob->w_state == VALID))
       t_stats[t_id].stalled_com_credit++;
+  }
+}
+
+static inline void check_when_waiting_for_gid(context_t *ctx,
+                                              w_rob_t *w_rob,
+                                              uint64_t committed_g_id)
+{
+  if (ENABLE_ASSERTIONS) {
+    if(w_rob->g_id != committed_g_id) {
+      dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
+      if (w_rob->g_id < committed_g_id) {
+        my_printf(red, "Committed g_id/expected %lu/%lu \n",
+                  committed_g_id, w_rob->g_id);
+        assert(false);
+      }
+
+      dr_ctx->wait_for_gid_dbg_counter++;
+      if (dr_ctx->wait_for_gid_dbg_counter % MILLION == 0)
+        my_printf(yellow, "Worker %u stuck for gid: expecting/reading %u/%u \n",
+                  ctx->t_id, w_rob->g_id, committed_g_id);
+    }
   }
 }
 

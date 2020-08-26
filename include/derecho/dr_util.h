@@ -123,7 +123,9 @@ static void* set_up_dr_ctx(context_t *ctx)
 {
   dr_ctx_t* dr_ctx = (dr_ctx_t*) calloc(1,sizeof(dr_ctx_t));
 
-  dr_ctx->w_rob = fifo_constructor(DR_PENDING_WRITES, sizeof(w_rob_t), false, 0, 1);
+  dr_ctx->w_rob = calloc(W_ROB_SIZE, sizeof(w_rob_t));
+  dr_ctx->loc_w_rob_ptr = fifo_constructor(DR_PENDING_WRITES, sizeof(w_rob_t*), false, 0, 1);
+
   dr_ctx->index_to_req_array = (uint32_t *) calloc(SESSIONS_PER_THREAD, sizeof(uint32_t));
 
   dr_ctx->stalled = (bool *) malloc(SESSIONS_PER_THREAD * sizeof(bool));
@@ -133,19 +135,25 @@ static void* set_up_dr_ctx(context_t *ctx)
   for(int i = 0; i <  DR_TRACE_BATCH; i++) dr_ctx->resp[i].type = EMPTY;
 
   for (int i = 0; i < SESSIONS_PER_THREAD; i++) dr_ctx->stalled[i] = false;
-  for (int i = 0; i < DR_PENDING_WRITES; i++) {
-    w_rob_t *w_rob = (w_rob_t *) get_fifo_slot(dr_ctx->w_rob, i);
+  for (int i = 0; i < W_ROB_SIZE; i++) {
+    w_rob_t *w_rob = &dr_ctx->w_rob[i];
     w_rob->w_state = INVALID;
     w_rob->g_id = 0;
   }
 
   dr_ctx->gid_rob_arr = calloc(1, sizeof(gid_rob_arr_t));
-  dr_ctx->gid_rob_arr->empty = true;
+  //dr_ctx->gid_rob_arr->empty = true;
   dr_ctx->gid_rob_arr->gid_rob = calloc(GID_ROB_NUM, sizeof(gid_rob_t));
+
   uint32_t thread_offset =  (uint32_t) (ctx->t_id * PER_THREAD_G_ID_BATCH);
   for (int i = 0; i < GID_ROB_NUM; ++i) {
-    dr_ctx->gid_rob_arr->gid_rob[i].w_rob_ptr = calloc(GID_ROB_SIZE, sizeof(uint32_t));
-    dr_ctx->gid_rob_arr->gid_rob[i].base_gid = (i * PER_MACHINE_G_ID_BATCH) + thread_offset;
+    dr_ctx->gid_rob_arr->gid_rob[i].w_rob = calloc(GID_ROB_SIZE, sizeof(w_rob_t*));
+    for (int j = 0; j < GID_ROB_SIZE; ++j) {
+      dr_ctx->gid_rob_arr->gid_rob[i].w_rob[j] = &dr_ctx->w_rob[(i * GID_ROB_SIZE) + j];
+    }
+
+    dr_ctx->gid_rob_arr->gid_rob[i].base_gid =
+      (i * PER_MACHINE_G_ID_BATCH) + thread_offset;
     dr_ctx->gid_rob_arr->gid_rob[i].valid = calloc(GID_ROB_SIZE, sizeof(bool));
     dr_ctx->gid_rob_arr->gid_rob[i].rob_id = (uint32_t) i;
     dr_ctx->gid_rob_arr->gid_rob[i].empty = true;

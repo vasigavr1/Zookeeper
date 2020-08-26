@@ -109,24 +109,41 @@ static inline void dr_batch_from_trace_to_KVS(context_t *ctx)
 static inline void dr_propagate_updates(context_t *ctx)
 {
   dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
-  fifo_t *prep_buf_mirror = ctx->qp_meta[PREP_QP_ID].mirror_remote_recv_fifo;
 
+  w_rob_t *ptrs_to_w_rob[DR_UPDATE_BATCH];
   uint16_t update_op_i = 0;
   // remember the starting point to use it when writing the KVS
-  uint32_t starting_pull_ptr = dr_ctx->w_rob->pull_ptr;
   uint64_t committed_g_id = atomic_load_explicit(&committed_global_w_id, memory_order_relaxed);
   dr_increase_counter_if_waiting_for_commit(dr_ctx, committed_g_id, ctx->t_id);
-  while(!dr_ctx->gid_rob_arr->empty) {
+  while(!get_g_id_rob_pull(dr_ctx)->empty) {
     w_rob_t *w_rob = get_w_rob_from_g_rob_pull(dr_ctx);
-    if (ENABLE_ASSERTIONS) assert(w_rob->w_state == VALID || w_rob->w_state == READY);
+    gid_rob_t *gid_rob = get_g_id_rob_pull(dr_ctx);
+    if (ctx->m_id == 0) print_g_id_rob(ctx, gid_rob->rob_id);
+    check_state_with_allowed_flags(4, w_rob->w_state, VALID, SENT, READY);
     if (w_rob->w_state != READY) break;
-
-
-    
-
+    check_when_waiting_for_gid(ctx, w_rob, committed_g_id);
+    if (w_rob->g_id != committed_g_id) break;
+    else {
+      if (ENABLE_ASSERTIONS) dr_ctx->wait_for_gid_dbg_counter = 0;
+      if (w_rob->is_local) {
+        reset_loc_w_rob(dr_ctx, w_rob);
+        reset_dr_ctx_meta(ctx, w_rob);
+      }
+      reset_gid_rob(ctx);
+      reset_w_rob(w_rob);
+      ptrs_to_w_rob[update_op_i] = w_rob;
+      update_op_i++;
+      committed_g_id++;
+    }
   }
 
-  //while(((w_rob_t *) get_fifo_pull_slot(dr_ctx->w_rob))->w_state == READY) {
+  if (update_op_i > 0) {
+    //dr_insert_commit();
+    dr_ctx->committed_w_id += update_op_i;
+    dr_KVS_batch_op_updates(ptrs_to_w_rob, update_op_i);
+  }
+
+  //while(((w_rob_t *) get_fifo_pull_slot(dr_ctx->loc_w_rob_ptr))->w_state == READY) {
   //  if (!is_expected_g_id_ready(dr_ctx, &committed_g_id, &update_op_i,
   //                              ctx->t_id))
   //    break;
@@ -146,7 +163,7 @@ static inline void dr_propagate_updates(context_t *ctx)
   //  }
   //
   //  dr_ctx->committed_w_id += update_op_i; // this must happen after inserting commits
-  //  fifo_decrease_capacity(dr_ctx->w_rob, update_op_i);
+  //  fifo_decrease_capacity(dr_ctx->loc_w_rob_ptr, update_op_i);
   //  dr_KVS_batch_op_updates((uint16_t) update_op_i, dr_ctx, starting_pull_ptr,
   //                          ctx->t_id);
   //
@@ -174,14 +191,14 @@ static inline void dr_apply_acks(context_t *ctx,
   uint64_t pull_lid = dr_ctx->committed_w_id;
   for (uint16_t ack_i = 0; ack_i < ack_num; ack_i++) {
 
-    if (ENABLE_ASSERTIONS && (ack_ptr == dr_ctx->w_rob->push_ptr)) {
+    if (ENABLE_ASSERTIONS && (ack_ptr == dr_ctx->loc_w_rob_ptr->push_ptr)) {
       uint32_t origin_ack_ptr = (uint32_t) (ack_ptr - ack_i + DR_PENDING_WRITES) % DR_PENDING_WRITES;
       my_printf(red, "Origin ack_ptr %u/%u, acks %u/%u, w_pull_ptr %u, w_push_ptr % u, capacity %u \n",
-                origin_ack_ptr,  (dr_ctx->w_rob->pull_ptr + (ack->l_id - pull_lid)) % DR_PENDING_WRITES,
-                ack_i, ack_num, dr_ctx->w_rob->pull_ptr, dr_ctx->w_rob->push_ptr, dr_ctx->w_rob->capacity);
+                origin_ack_ptr,  (dr_ctx->loc_w_rob_ptr->pull_ptr + (ack->l_id - pull_lid)) % DR_PENDING_WRITES,
+                ack_i, ack_num, dr_ctx->loc_w_rob_ptr->pull_ptr, dr_ctx->loc_w_rob_ptr->push_ptr, dr_ctx->loc_w_rob_ptr->capacity);
     }
 
-    w_rob_t *w_rob = (w_rob_t *) get_fifo_slot(dr_ctx->w_rob, ack_ptr);
+    w_rob_t *w_rob = *(w_rob_t **) get_fifo_slot(dr_ctx->loc_w_rob_ptr, ack_ptr);
     w_rob->acks_seen++;
     if (w_rob->acks_seen == QUORUM_NUM) {
       if (ENABLE_ASSERTIONS) qp_meta->outstanding_messages--;
@@ -211,12 +228,12 @@ static inline bool ack_handler(context_t *ctx)
 
   ctx_increase_credits_on_polling_ack(ctx, ACK_QP_ID, ack);
 
-  if ((dr_ctx->w_rob->capacity == 0 ) ||
+  if ((dr_ctx->loc_w_rob_ptr->capacity == 0 ) ||
       (pull_lid >= l_id && (pull_lid - l_id) >= ack_num))
     return true;
 
   dr_check_ack_l_id_is_small_enough(ctx, ack);
-  ack_ptr = ctx_find_when_the_ack_points_acked(ack, dr_ctx->w_rob, pull_lid, &ack_num);
+  ack_ptr = ctx_find_when_the_ack_points_acked(ack, dr_ctx->loc_w_rob_ptr, pull_lid, &ack_num);
 
   // Apply the acks that refer to stored writes
   dr_apply_acks(ctx, ack, ack_num, ack_ptr);
@@ -236,19 +253,19 @@ static inline bool prepare_handler(context_t *ctx)
 
   uint8_t coalesce_num = prep_mes->coalesce_num;
 
-  if (qp_meta->mirror_remote_recv_fifo->capacity == MAX_PREP_BUF_SLOTS_TO_BE_POLLED) return false;
-  if (dr_ctx->w_rob->capacity + coalesce_num > DR_PENDING_WRITES) return false;
+  //if (qp_meta->mirror_remote_recv_fifo->capacity == MAX_PREP_BUF_SLOTS_TO_BE_POLLED) return false;
+  //if (dr_ctx->loc_w_rob_ptr->capacity + coalesce_num > DR_PENDING_WRITES) return false;
   dr_check_polled_prep_and_print(ctx, prep_mes);
 
   ctx_ack_insert(ctx, ACK_QP_ID, coalesce_num,  prep_mes->l_id, prep_mes->m_id);
-  add_to_the_mirrored_buffer(qp_meta->mirror_remote_recv_fifo,
-                             coalesce_num, 1, ctx->q_info);
+  //add_to_the_mirrored_buffer(qp_meta->mirror_remote_recv_fifo,
+  //                           coalesce_num, 1, ctx->q_info);
 
   for (uint8_t prep_i = 0; prep_i < coalesce_num; prep_i++) {
     dr_check_prepare_and_print(ctx, prep_mes, prep_i);
     fill_dr_ctx_entry(ctx, prep_mes, prep_i);
-    fifo_incr_push_ptr(dr_ctx->w_rob);
-    fifo_incr_capacity(dr_ctx->w_rob);
+    //fifo_incr_push_ptr(dr_ctx->loc_w_rob_ptr);
+    //fifo_incr_capacity(dr_ctx->loc_w_rob_ptr);
   }
 
   if (ENABLE_ASSERTIONS) prep_mes->opcode = 0;
@@ -276,7 +293,7 @@ static inline void send_prepares_helper(context_t *ctx)
   uint32_t backward_ptr = fifo_get_pull_backward_ptr(send_fifo);
 
   for (uint16_t i = 0; i < coalesce_num; i++) {
-    w_rob_t *w_rob = (w_rob_t *) get_fifo_slot_mod(dr_ctx->w_rob, backward_ptr + i);
+    w_rob_t *w_rob = *(w_rob_t **) get_fifo_slot_mod(dr_ctx->loc_w_rob_ptr, backward_ptr + i);
     w_rob->w_state = SENT;
     if (DEBUG_PREPARES)
       printf("Prepare %d, g_id %lu, total message capacity %d\n", i, prep->prepare[i].g_id,
@@ -309,6 +326,8 @@ static inline void main_loop(context_t *ctx)
     ctx_send_acks(ctx, ACK_QP_ID);
 
     ctx_poll_incoming_messages(ctx, ACK_QP_ID);
+
+    dr_propagate_updates(ctx);
 
   }
 }
