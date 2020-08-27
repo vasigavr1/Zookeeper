@@ -188,7 +188,7 @@ static inline void check_ldr_p_states(context_t *ctx)
 //------------------------------ POLLNG ACKS -----------------------------
 //---------------------------------------------------------------------------*/
 
-static inline void zk_check_polled_ack_and_print(ack_mes_t *ack, uint32_t ack_num,
+static inline void zk_check_polled_ack_and_print(ctx_ack_mes_t *ack, uint32_t ack_num,
                                                  uint64_t pull_lid, uint32_t buf_ptr, uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
@@ -450,7 +450,7 @@ static inline void zk_checks_and_stats_on_bcasting_commits(fifo_t *send_fifo,
 //---------------------------------------------------------------------------*/
 
 
-static inline void check_stats_prints_when_sending_acks(ack_mes_t *ack,
+static inline void check_stats_prints_when_sending_acks(ctx_ack_mes_t *ack,
                                                         zk_ctx_t *zk_ctx,
                                                         uint64_t l_id_to_send, uint16_t t_id)
 {

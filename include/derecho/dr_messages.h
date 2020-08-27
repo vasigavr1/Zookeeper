@@ -9,13 +9,13 @@
 
 
 /// PREP_QP_ID
-#define PREP_CREDITS 5
-#define MAX_PREP_SIZE 300
+#define PREP_CREDITS 10
+#define MAX_PREP_SIZE 500
 
 #define MAX_PREP_WRS (MESSAGES_IN_BCAST_BATCH)
 
-#define MAX_PREP_BUF_SLOTS_TO_BE_POLLED (2 * PREP_CREDITS * REM_MACH_NUM)
-#define MAX_RECV_PREP_WRS (3 * PREP_CREDITS * REM_MACH_NUM)
+#define MAX_PREP_BUF_SLOTS_TO_BE_POLLED ( PREP_CREDITS * REM_MACH_NUM)
+#define MAX_RECV_PREP_WRS (PREP_CREDITS * REM_MACH_NUM)
 #define PREP_BUF_SLOTS (MAX_RECV_PREP_WRS)
 
 #define PREP_MES_HEADER 12 // opcode(1), coalesce_num(1) l_id (8)
@@ -51,6 +51,11 @@ typedef struct dr_prep_message_ud_req {
   dr_prep_mes_t prepare;
 } dr_prep_mes_ud_t;
 
+
+#define COM_CREDITS 5
+#define COM_WRS MESSAGES_IN_BCAST_BATCH
+#define RECV_COM_WRS (REM_MACH_NUM * COM_CREDITS)
+#define COM_BUF_SLOTS RECV_COM_WRS
 
 
 

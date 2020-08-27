@@ -21,6 +21,19 @@ static inline char* dr_w_state_to_str(w_state_t state)
   }
 }
 
+static inline void print_w_rob_entry(context_t *ctx, w_rob_t *w_rob)
+{
+  assert(w_rob != NULL);
+  my_printf(cyan, "WRKR %u ~~~~~~~W_rob %u~~~~~~~~~\n", ctx->t_id, w_rob->w_rob_id);
+  my_printf(cyan, "W_State: %s, %s\n",
+            dr_w_state_to_str(w_rob->w_state), w_rob->is_local ? "Local" : "Remote");
+  my_printf(cyan, "G_id: %lu\n", w_rob->g_id);
+  my_printf(cyan, "M_id: %u\n", w_rob->m_id);
+  my_printf(cyan, "Sess_id: %u\n", w_rob->session_id);
+  my_printf(cyan, "Acks seen: %u\n", w_rob->acks_seen);
+  my_printf(cyan, "Key bkt: %u\n", w_rob->key.bkt);
+}
+
 static inline void print_g_id_entry(context_t *ctx,
                                     uint32_t rob_id,
                                     uint32_t entry_i)
@@ -37,13 +50,17 @@ static inline void print_g_id_entry(context_t *ctx,
             dr_w_state_to_str(w_rob->w_state), w_rob->g_id);
 }
 
+
 static inline void print_g_id_rob(context_t *ctx, uint32_t rob_id)
 {
   assert(rob_id < GID_ROB_NUM);
   dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
   gid_rob_t *gid_rob = &dr_ctx->gid_rob_arr->gid_rob[rob_id];
   my_printf(cyan, "~~~~~~~Gid_rob %u~~~~~~~~~\n", gid_rob->rob_id);
-  my_printf(cyan, "Ranging from %lu to %lu\n", gid_rob->base_gid, gid_rob->base_gid + GID_ROB_SIZE);
+  my_printf(cyan, "Ranging from %lu to %lu, %s\n",
+            gid_rob->base_gid, gid_rob->base_gid + GID_ROB_SIZE,
+            gid_rob->empty ? "EMPTY" : "NOT EMPTY");
+  my_printf(cyan, "First valid %u\n", gid_rob->first_valid);
   for (uint32_t i = 0; i < GID_ROB_SIZE; ++i) {
     print_g_id_entry(ctx, rob_id, i);
   }
@@ -136,7 +153,7 @@ static inline void dr_check_prepare_and_print(context_t *ctx,
 
 
 static inline void dr_check_ack_l_id_is_small_enough(context_t *ctx,
-                                                     ack_mes_t *ack)
+                                                     ctx_ack_mes_t *ack)
 {
   if (ENABLE_ASSERTIONS) {
     dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;

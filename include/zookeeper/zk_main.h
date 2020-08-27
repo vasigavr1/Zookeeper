@@ -275,7 +275,7 @@ typedef enum op_state {INVALID, VALID, SENT, READY, SEND_COMMITTS} w_state_t;
 
 
 // The format of a commit message
-typedef struct com_message {
+typedef struct zk_com_message {
   uint64_t l_id;
   uint32_t com_num;
 	uint8_t opcode;

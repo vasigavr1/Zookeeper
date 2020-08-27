@@ -269,8 +269,6 @@ static inline void zk_insert_commit(context_t *ctx,
   send_fifo->net_capacity += update_op_i;
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
   slot_meta->coalesce_num += update_op_i;
-
-
 }
 
 
@@ -498,7 +496,7 @@ static inline void zk_fill_trace_op(context_t *ctx,
 
 
 
-static inline void zk_increase_prep_credits(uint16_t *credits, ack_mes_t *ack,
+static inline void zk_increase_prep_credits(uint16_t *credits, ctx_ack_mes_t *ack,
                                             struct fifo *remote_prep_buf, uint16_t t_id)
 {
   uint8_t rm_id = (uint8_t) (ack->m_id > LEADER_MACHINE ? ack->m_id - 1 : ack->m_id);

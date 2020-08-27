@@ -65,15 +65,15 @@ static void dr_qp_meta_mfs(context_t *ctx)
 
 static void dr_init_send_fifos(context_t *ctx)
 {
-  //fifo_t *send_fifo = ctx->qp_meta[COMMIT_W_QP_ID].send_fifo;
-  //dr_com_mes_t *commits = (dr_com_mes_t *) send_fifo->fifo;
-  //
-  //for (uint32_t i = 0; i < COMMIT_FIFO_SIZE; i++) {
-  //  commits[i].opcode = KVS_OP_PUT;
-  //}
+  fifo_t *send_fifo = ctx->qp_meta[COM_QP_ID].send_fifo;
+  ctx_com_mes_t *commits = (ctx_com_mes_t *) send_fifo->fifo;
 
-  ack_mes_t *ack_send_buf = (ack_mes_t *) ctx->qp_meta[ACK_QP_ID].send_fifo->fifo; //calloc(MACHINE_NUM, sizeof(ack_mes_t));
-  assert(ctx->qp_meta[ACK_QP_ID].send_fifo->max_byte_size == ACK_SIZE * MACHINE_NUM);
+  for (uint32_t i = 0; i < COMMIT_FIFO_SIZE; i++) {
+    commits[i].opcode = COMMIT_OP;
+  }
+
+  ctx_ack_mes_t *ack_send_buf = (ctx_ack_mes_t *) ctx->qp_meta[ACK_QP_ID].send_fifo->fifo; //calloc(MACHINE_NUM, sizeof(ctx_ack_mes_t));
+  assert(ctx->qp_meta[ACK_QP_ID].send_fifo->max_byte_size == CTX_ACK_SIZE * MACHINE_NUM);
   memset(ack_send_buf, 0, ctx->qp_meta[ACK_QP_ID].send_fifo->max_byte_size);
   for (int i = 0; i < MACHINE_NUM; i++) {
     ack_send_buf[i].m_id = (uint8_t) machine_id;
@@ -100,7 +100,7 @@ static void dr_init_qp_meta(context_t *ctx)
                      ACK_QP_ID,
                      REM_MACH_NUM, REM_MACH_NUM, PREP_BUF_SLOTS,
                      PREP_RECV_SIZE, PREP_SEND_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
-                     PREP_MCAST_QP, 0, PREP_FIFO_SIZE,
+                     DR_PREP_MCAST_QP, 0, PREP_FIFO_SIZE,
                      PREP_CREDITS, PREP_MES_HEADER,
                      "send preps", "recv preps");
 
@@ -109,14 +109,19 @@ static void dr_init_qp_meta(context_t *ctx)
                     PREP_QP_ID, REM_MACH_NUM,
                     REM_MACH_NUM, PREP_CREDITS);
 
+  create_per_qp_meta(&qp_meta[COM_QP_ID], COM_WRS,
+                     RECV_COM_WRS, SEND_BCAST_RECV_BCAST, RECV_SEC_ROUND,
+                     COM_QP_ID,
+                     REM_MACH_NUM, REM_MACH_NUM, COM_BUF_SLOTS,
+                     CTX_COM_RECV_SIZE, CTX_COM_SEND_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
+                     COM_MCAST_QP, 0, COMMIT_FIFO_SIZE,
+                     COM_CREDITS, CTX_COM_SEND_SIZE,
+                     "send commits", "recv commits");
+
 
   dr_qp_meta_mfs(ctx);
   dr_init_send_fifos(ctx);
 
-  /// Mirroring our local buffer, to be able to calculate its capacity,
-  /// when committing prepares one by one (whilst a slot contains multiple--coalesced--prepares)
-  ctx_qp_meta_mirror_buffers(&qp_meta[PREP_QP_ID],
-                             PREP_BUF_SLOTS, 1);
 }
 
 static void* set_up_dr_ctx(context_t *ctx)
@@ -139,6 +144,7 @@ static void* set_up_dr_ctx(context_t *ctx)
     w_rob_t *w_rob = &dr_ctx->w_rob[i];
     w_rob->w_state = INVALID;
     w_rob->g_id = 0;
+    w_rob->w_rob_id = (uint16_t) i;
   }
 
   dr_ctx->gid_rob_arr = calloc(1, sizeof(gid_rob_arr_t));
@@ -147,10 +153,10 @@ static void* set_up_dr_ctx(context_t *ctx)
 
   uint32_t thread_offset =  (uint32_t) (ctx->t_id * PER_THREAD_G_ID_BATCH);
   for (int i = 0; i < GID_ROB_NUM; ++i) {
-    dr_ctx->gid_rob_arr->gid_rob[i].w_rob = calloc(GID_ROB_SIZE, sizeof(w_rob_t*));
-    for (int j = 0; j < GID_ROB_SIZE; ++j) {
-      dr_ctx->gid_rob_arr->gid_rob[i].w_rob[j] = &dr_ctx->w_rob[(i * GID_ROB_SIZE) + j];
-    }
+    //dr_ctx->gid_rob_arr->gid_rob[i].w_rob = calloc(GID_ROB_SIZE, sizeof(w_rob_t*));
+    //for (int j = 0; j < GID_ROB_SIZE; ++j) {
+    //  dr_ctx->gid_rob_arr->gid_rob[i].w_rob[j] = &dr_ctx->w_rob[(i * GID_ROB_SIZE) + j];
+    //}
 
     dr_ctx->gid_rob_arr->gid_rob[i].base_gid =
       (i * PER_MACHINE_G_ID_BATCH) + thread_offset;

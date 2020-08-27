@@ -23,17 +23,25 @@ void dr_stats(stats_ctx_t *ctx);
 #define PER_MACHINE_G_ID_BATCH (WORKERS_PER_MACHINE * PER_THREAD_G_ID_BATCH)
 #define TOTAL_G_ID_BATCH (MACHINE_NUM * PER_MACHINE_G_ID_BATCH)
 
-#define QP_NUM 2
+#define QP_NUM 3
 #define PREP_QP_ID 0
 #define ACK_QP_ID 1
+#define COM_QP_ID 2
 
-#define PREP_MCAST_QP 0
+#define DR_PREP_MCAST_QP 0
+#define COM_MCAST_QP 0
 
 //#define REMOTE_W_SLOTS (2 * REM_MACH_NUM * PREP_CREDITS * PREP_COALESCE)
 #define DR_PENDING_WRITES ((SESSIONS_PER_THREAD + 1))
+#define COMMIT_FIFO_SIZE 1
+
+#define GID_ROB_NUM (MACHINE_NUM * 5)
+#define GID_ROB_SIZE (PER_THREAD_G_ID_BATCH)
+#define W_ROB_SIZE (GID_ROB_NUM * GID_ROB_SIZE)
+#define G_ID_BASE_JUMP (GID_ROB_NUM * PER_MACHINE_G_ID_BATCH)
 
 #define DR_TRACE_BATCH SESSIONS_PER_THREAD
-#define DR_UPDATE_BATCH (DR_PENDING_WRITES * MACHINE_NUM)
+#define DR_UPDATE_BATCH (W_ROB_SIZE)
 
 /*------------------------------------------------
  * ----------------KVS----------------------------
@@ -100,6 +108,7 @@ typedef struct w_rob {
   dr_prepare_t *ptr_to_op;
   mica_key_t key;
   uint8_t value[VALUE_SIZE];
+  uint16_t w_rob_id;
 
 } w_rob_t;
 
@@ -118,12 +127,9 @@ typedef struct r_rob {
   uint64_t l_id;
 } r_rob_t ;
 
-#define GID_ROB_NUM (MACHINE_NUM * 5)
-#define GID_ROB_SIZE (PER_THREAD_G_ID_BATCH)
-#define W_ROB_SIZE (GID_ROB_NUM * GID_ROB_SIZE)
-#define G_ID_BASE_JUMP (GID_ROB_NUM * PER_MACHINE_G_ID_BATCH)
+
 typedef struct gid_rob {
-  w_rob_t **w_rob;
+  //w_rob_t **w_rob;
   bool *valid;
   uint64_t base_gid;
   uint32_t rob_id;
@@ -134,6 +140,7 @@ typedef struct gid_rob {
 typedef struct g_id_rob_array {
   gid_rob_t *gid_rob;
   uint32_t pull_ptr;
+  uint32_t size;
   //bool empty;
 } gid_rob_arr_t;
 
@@ -175,6 +182,7 @@ typedef struct dr_ctx {
   bool all_sessions_stalled;
 
   uint32_t wait_for_gid_dbg_counter;
+  uint32_t stalled_sessions_dbg_counter;
 } dr_ctx_t;
 
 

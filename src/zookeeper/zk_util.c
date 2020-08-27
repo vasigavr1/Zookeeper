@@ -16,8 +16,8 @@ void zk_print_parameters_in_the_start()
               sizeof(zk_com_mes_t), LDR_COM_SEND_SIZE,
               sizeof(zk_com_mes_ud_t), FLR_COM_RECV_SIZE);
     my_printf(cyan, "ACK: ack message %lu/%d, ack message ud req %llu/%d\n",
-              sizeof(ack_mes_t), FLR_ACK_SEND_SIZE,
-              sizeof(ack_mes_ud_t), LDR_ACK_RECV_SIZE);
+              sizeof(ctx_ack_mes_t), FLR_ACK_SEND_SIZE,
+              sizeof(ctx_ack_mes_ud_t), LDR_ACK_RECV_SIZE);
     my_printf(yellow, "PREPARE: prepare %lu/%d, prep message %lu/%d, prep message ud req %llu/%d\n",
               sizeof(zk_prepare_t), PREP_SIZE,
               sizeof(zk_prep_mes_t), LDR_PREP_SEND_SIZE,
@@ -57,7 +57,7 @@ void zk_static_assert_compile_parameters()
   assert(LEADERS_PER_MACHINE == FOLLOWERS_PER_MACHINE); // hopefully temporary restriction
   assert((W_CREDITS % LDR_CREDIT_DIVIDER) == 0); // division better be perfect
   assert((COMMIT_CREDITS % FLR_CREDIT_DIVIDER) == 0); // division better be perfect
-  assert(sizeof(ack_mes_ud_t) == LDR_ACK_RECV_SIZE);
+  assert(sizeof(ctx_ack_mes_ud_t) == LDR_ACK_RECV_SIZE);
   assert(sizeof(zk_com_mes_ud_t) == FLR_COM_RECV_SIZE);
   assert(sizeof(zk_prep_mes_ud_t) == FLR_PREP_RECV_SIZE);
   assert(sizeof(zk_w_mes_ud_t) == LDR_W_RECV_SIZE);
@@ -274,7 +274,7 @@ void zk_init_flr_send_fifos(context_t *ctx)
     }
   }
   per_qp_meta_t *prep_ack_qp_meta = &ctx->qp_meta[PREP_ACK_QP_ID];
-  ack_mes_t * acks = (ack_mes_t *) prep_ack_qp_meta->send_fifo->fifo; //calloc(1, sizeof(ack_mes_t));
+  ctx_ack_mes_t * acks = (ctx_ack_mes_t *) prep_ack_qp_meta->send_fifo->fifo; //calloc(1, sizeof(ctx_ack_mes_t));
   for (int m_id = 0; m_id < prep_ack_qp_meta->send_wr_num; ++m_id) {
     acks[m_id].opcode = OP_ACK;
     acks[m_id].m_id = ctx->m_id;
@@ -308,8 +308,6 @@ void zk_init_qp_meta(context_t *ctx)
       zk_ldr_qp_meta_init(qp_meta);
       zk_ldr_qp_meta_mfs(ctx);
       zk_init_ldr_send_fifos(ctx);
-      ctx_qp_meta_mirror_buffers(&qp_meta[PREP_ACK_QP_ID],
-                                 FLR_PREP_BUF_SLOTS, FOLLOWER_MACHINE_NUM);
       break;
     default: assert(false);
   }

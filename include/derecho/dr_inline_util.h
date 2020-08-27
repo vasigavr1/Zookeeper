@@ -26,8 +26,16 @@ static inline void dr_batch_from_trace_to_KVS(context_t *ctx)
   // if there are clients the "all_sessions_stalled" flag is not used,
   // so we need not bother checking it
   if (!ENABLE_CLIENTS && dr_ctx->all_sessions_stalled) {
+    dr_ctx->stalled_sessions_dbg_counter++;
+    if (ENABLE_ASSERTIONS) {
+      if (dr_ctx->stalled_sessions_dbg_counter == MILLION) {
+        my_printf(red, "Wrkr %u, all sessions are stalled \n", ctx->t_id);
+        dr_ctx->stalled_sessions_dbg_counter = 0;
+      }
+    }
     return;
-  }
+  } else if (ENABLE_ASSERTIONS) dr_ctx->stalled_sessions_dbg_counter = 0;
+
   for (uint16_t i = 0; i < SESSIONS_PER_THREAD; i++) {
     uint16_t sess_i = (uint16_t)((dr_ctx->last_session + i) % SESSIONS_PER_THREAD);
     if (pull_request_from_this_session(dr_ctx->stalled[sess_i], sess_i, ctx->t_id)) {
@@ -111,16 +119,18 @@ static inline void dr_propagate_updates(context_t *ctx)
   dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
 
   w_rob_t *ptrs_to_w_rob[DR_UPDATE_BATCH];
-  uint16_t update_op_i = 0;
+  uint16_t update_op_i = 0, local_op_i = 0;
   // remember the starting point to use it when writing the KVS
   uint64_t committed_g_id = atomic_load_explicit(&committed_global_w_id, memory_order_relaxed);
   dr_increase_counter_if_waiting_for_commit(dr_ctx, committed_g_id, ctx->t_id);
   while(!get_g_id_rob_pull(dr_ctx)->empty) {
     w_rob_t *w_rob = get_w_rob_from_g_rob_pull(dr_ctx);
     gid_rob_t *gid_rob = get_g_id_rob_pull(dr_ctx);
-    //if (ctx->m_id == 0) print_g_id_rob(ctx, gid_rob->rob_id);
+    if (w_rob->w_state == INVALID)
+      print_g_id_rob(ctx, gid_rob->rob_id);
     check_state_with_allowed_flags(4, w_rob->w_state, VALID, SENT, READY);
     if (w_rob->w_state != READY) break;
+
     check_when_waiting_for_gid(ctx, w_rob, committed_g_id);
     if (w_rob->g_id != committed_g_id) break;
     else {
@@ -128,7 +138,14 @@ static inline void dr_propagate_updates(context_t *ctx)
       if (w_rob->is_local) {
         reset_loc_w_rob(dr_ctx, w_rob);
         reset_dr_ctx_meta(ctx, w_rob);
+        local_op_i++;
       }
+      if (DEBUG_COMMITS)
+        my_printf(yellow, "Wrkr %u committing g_id %lu, update_op_i %u "
+                    "from gid_rob %u, resetting w_rob %u \n",
+                  ctx->t_id, w_rob->g_id, update_op_i,
+                  gid_rob->rob_id, w_rob->w_rob_id);
+      //print_w_rob_entry(ctx, w_rob);
       reset_gid_rob(ctx);
       reset_w_rob(w_rob);
       ptrs_to_w_rob[update_op_i] = w_rob;
@@ -138,9 +155,13 @@ static inline void dr_propagate_updates(context_t *ctx)
   }
 
   if (update_op_i > 0) {
-    //dr_insert_commit();
-    dr_ctx->committed_w_id += update_op_i;
+    if (local_op_i > 0) {
+      ctx_insert_commit(ctx, COM_QP_ID, update_op_i, dr_ctx->committed_w_id);
+      dr_ctx->committed_w_id += local_op_i;
+    }
+
     dr_KVS_batch_op_updates(ptrs_to_w_rob, update_op_i);
+    atomic_store_explicit(&committed_global_w_id, committed_g_id, memory_order_relaxed);
   }
 }
 
@@ -153,7 +174,7 @@ static inline void dr_propagate_updates(context_t *ctx)
 
 
 static inline void dr_apply_acks(context_t *ctx,
-                                 ack_mes_t *ack,
+                                 ctx_ack_mes_t *ack,
                                  uint32_t ack_num, uint32_t ack_ptr)
 {
   dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
@@ -187,14 +208,13 @@ static inline bool ack_handler(context_t *ctx)
   dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[ACK_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
-  volatile ack_mes_ud_t *incoming_acks = (volatile ack_mes_ud_t *) recv_fifo->fifo;
-  ack_mes_t *ack = (ack_mes_t *) &incoming_acks[recv_fifo->pull_ptr].ack;
+  volatile ctx_ack_mes_ud_t *incoming_acks = (volatile ctx_ack_mes_ud_t *) recv_fifo->fifo;
+  ctx_ack_mes_t *ack = (ctx_ack_mes_t *) &incoming_acks[recv_fifo->pull_ptr].ack;
   uint32_t ack_num = ack->ack_num;
   uint64_t l_id = ack->l_id;
   uint64_t pull_lid = dr_ctx->committed_w_id; // l_id at the pull pointer
   uint32_t ack_ptr; // a pointer in the FIFO, from where ack should be added
   //dr_check_polled_ack_and_print(ack, ack_num, pull_lid, recv_fifo->pull_ptr, ctx->t_id);
-  //dr_increase_prep_credits(qp_meta->credits, ack, qp_meta->mirror_remote_recv_fifo, ctx->t_id);
 
   ctx_increase_credits_on_polling_ack(ctx, ACK_QP_ID, ack);
 
@@ -223,13 +243,10 @@ static inline bool prepare_handler(context_t *ctx)
 
   uint8_t coalesce_num = prep_mes->coalesce_num;
 
-  //if (qp_meta->mirror_remote_recv_fifo->capacity == MAX_PREP_BUF_SLOTS_TO_BE_POLLED) return false;
-  //if (dr_ctx->loc_w_rob_ptr->capacity + coalesce_num > DR_PENDING_WRITES) return false;
   dr_check_polled_prep_and_print(ctx, prep_mes);
 
   ctx_ack_insert(ctx, ACK_QP_ID, coalesce_num,  prep_mes->l_id, prep_mes->m_id);
-  //add_to_the_mirrored_buffer(qp_meta->mirror_remote_recv_fifo,
-  //                           coalesce_num, 1, ctx->q_info);
+
 
   for (uint8_t prep_i = 0; prep_i < coalesce_num; prep_i++) {
     dr_check_prepare_and_print(ctx, prep_mes, prep_i);
@@ -264,6 +281,7 @@ static inline void send_prepares_helper(context_t *ctx)
 
   for (uint16_t i = 0; i < coalesce_num; i++) {
     w_rob_t *w_rob = *(w_rob_t **) get_fifo_slot_mod(dr_ctx->loc_w_rob_ptr, backward_ptr + i);
+    if (ENABLE_ASSERTIONS) assert(w_rob->w_state == VALID);
     w_rob->w_state = SENT;
     if (DEBUG_PREPARES)
       printf("Prepare %d, g_id %lu, total message capacity %d\n", i, prep->prepare[i].g_id,
@@ -284,7 +302,7 @@ static inline void send_prepares_helper(context_t *ctx)
 
 static inline void main_loop(context_t *ctx)
 {
-  my_printf(yellow, "Derecho main loop \n");
+  if (ctx->t_id == 0) my_printf(yellow, "Derecho main loop \n");
   while(true) {
 
     dr_batch_from_trace_to_KVS(ctx);

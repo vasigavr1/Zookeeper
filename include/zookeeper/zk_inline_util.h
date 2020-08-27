@@ -204,7 +204,7 @@ static inline void propagate_updates(context_t *ctx)
       remove_from_the_mirrored_buffer(prep_buf_mirror, update_op_i,
                                       ctx->t_id, 0, FLR_PREP_BUF_SLOTS);
     }
-    else zk_insert_commit(ctx, update_op_i);
+    else ctx_insert_commit(ctx, COMMIT_W_QP_ID, update_op_i, zk_ctx->local_w_id);
 
     zk_ctx->local_w_id += update_op_i; // this must happen after inserting commits
     fifo_decrease_capacity(zk_ctx->w_rob, update_op_i);
@@ -260,14 +260,14 @@ static inline bool ack_handler(context_t *ctx)
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[PREP_ACK_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
-  volatile ack_mes_ud_t *incoming_acks = (volatile ack_mes_ud_t *) recv_fifo->fifo;
-  ack_mes_t *ack = (ack_mes_t *) &incoming_acks[recv_fifo->pull_ptr].ack;
+  volatile ctx_ack_mes_ud_t *incoming_acks = (volatile ctx_ack_mes_ud_t *) recv_fifo->fifo;
+  ctx_ack_mes_t *ack = (ctx_ack_mes_t *) &incoming_acks[recv_fifo->pull_ptr].ack;
   uint32_t ack_num = ack->ack_num;
   uint64_t l_id = ack->l_id;
   uint64_t pull_lid = zk_ctx->local_w_id; // l_id at the pull pointer
   uint32_t ack_ptr; // a pointer in the FIFO, from where ack should be added
   zk_check_polled_ack_and_print(ack, ack_num, pull_lid, recv_fifo->pull_ptr, ctx->t_id);
-  zk_increase_prep_credits(qp_meta->credits, ack, qp_meta->mirror_remote_recv_fifo, ctx->t_id);
+  ctx_increase_credits_on_polling_ack(ctx, PREP_ACK_QP_ID, ack);
   if ((zk_ctx->w_rob->capacity == 0 ) ||
       (pull_lid >= l_id && (pull_lid - l_id) >= ack_num))
     return true;
@@ -532,10 +532,6 @@ static inline void send_prepares_helper(context_t *ctx)
               ctx->t_id, prep->opcode, coalesce_num, slot_meta->byte_size,
               qp_meta->credits[0], prep->l_id);
 
-
-  add_to_the_mirrored_buffer(qp_meta->mirror_remote_recv_fifo,
-                             coalesce_num, FOLLOWER_MACHINE_NUM,
-                             ctx->q_info);
   zk_checks_and_stats_on_bcasting_prepares(send_fifo, coalesce_num,
                                            &qp_meta->outstanding_messages, ctx->t_id);
 }

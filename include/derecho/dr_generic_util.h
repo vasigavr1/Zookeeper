@@ -73,7 +73,9 @@ static inline uint32_t get_w_rob_slot(gid_rob_t *gid_rob,
     assert(gid_rob != NULL);
   }
   uint32_t w_rob_ptr = (uint32_t) ((gid_rob->rob_id * GID_ROB_SIZE) + (g_id %  GID_ROB_SIZE));
+  //printf("G_id %lu maps to w_rob %u \n", g_id, w_rob_ptr);
   if (ENABLE_ASSERTIONS) assert(w_rob_ptr < W_ROB_SIZE);
+  return w_rob_ptr;
 }
 
 static inline w_rob_t *get_w_rob_ptr(dr_ctx_t *dr_ctx,
@@ -114,7 +116,7 @@ static inline void set_gid_rob_entry_priv(context_t *ctx,
                                           uint64_t g_id)
 {
   uint32_t entry_i = (uint32_t) (g_id % GID_ROB_SIZE);
-
+  dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
   if (ENABLE_ASSERTIONS) {
     if (gid_rob->valid[entry_i]) {
       my_printf(red, "Wrkr %u Trying to insert (new_gid %lu) "
@@ -122,17 +124,16 @@ static inline void set_gid_rob_entry_priv(context_t *ctx,
       print_g_id_rob(ctx, gid_rob->rob_id);
       assert(false);
     }
-
+    assert(dr_ctx->gid_rob_arr->size < W_ROB_SIZE);
   }
   gid_rob->valid[entry_i] = true;
   gid_rob->empty = false;
 
+  dr_ctx->gid_rob_arr->size++;
+
   if (entry_i < gid_rob->first_valid) {
     gid_rob->first_valid = entry_i;
   }
-
-  //dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
-  //dr_ctx->gid_rob_arr->empty = false;
 }
 
 
@@ -148,6 +149,49 @@ static inline gid_rob_t *get_and_set_gid_entry(context_t *ctx,
   gid_rob_t *gid_rob = get_g_id_rob_ptr(ctx, g_id);
   set_gid_rob_entry_priv(ctx, gid_rob, g_id);
   return gid_rob;
+}
+
+
+
+static inline void reset_gid_rob(context_t *ctx)
+{
+  dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
+  gid_rob_t *gid_rob = get_g_id_rob_pull(dr_ctx);
+  if (ENABLE_ASSERTIONS) {
+    //printf("Resetting gid \n");
+    //print_g_id_entry(ctx, gid_rob->rob_id, gid_rob->first_valid);
+    assert(&dr_ctx->gid_rob_arr->gid_rob[gid_rob->rob_id] == gid_rob);
+    assert(dr_ctx->gid_rob_arr->size > 0);
+    assert(gid_rob->valid[gid_rob->first_valid]);
+  }
+
+  bool last = gid_rob->first_valid == GID_ROB_SIZE - 1;
+  //bool last_valid = false;
+  //if (!last) last_valid = !gid_rob->valid[gid_rob->first_valid + 1];
+  bool next_entry_is_valid = false;
+  if (!last) next_entry_is_valid = gid_rob->valid[gid_rob->first_valid + 1];
+
+  gid_rob->valid[gid_rob->first_valid] = false;
+  gid_rob->first_valid++;
+  dr_ctx->gid_rob_arr->size--;
+
+  if (next_entry_is_valid) {
+    if (ENABLE_ASSERTIONS) {
+      assert(gid_rob->first_valid < GID_ROB_SIZE);
+      assert(gid_rob->valid[gid_rob->first_valid]);
+    }
+    return;
+  }
+
+  gid_rob->empty = true;
+  if (ENABLE_ASSERTIONS)
+    assert(gid_rob_is_empty(gid_rob)); // as long as each g_rob maps to one thread
+
+  if (last) {
+    gid_rob->first_valid = 0;
+    gid_rob->base_gid += G_ID_BASE_JUMP;
+    MOD_INCR(dr_ctx->gid_rob_arr->pull_ptr, GID_ROB_NUM);
+  }
 }
 
 

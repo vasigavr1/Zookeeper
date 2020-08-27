@@ -25,17 +25,24 @@ static inline void fill_prep(context_t *ctx,
   //prep->m_id = ctx->m_id;
   //prep->sess_id = op->session_id;
   prep->g_id = assign_new_g_id(ctx);
-  printf("Wrkr %u assigned g_id %lu \n", ctx->t_id, prep->g_id);
+  if (DEBUG_GID && (prep->g_id % M_2 == 0))
+    printf("Wrkr %u assigned g_id %lu \n", ctx->t_id, prep->g_id);
 }
 
-static inline void insert_in_w_rob(w_rob_t *w_rob,
+static inline void insert_in_w_rob(context_t *ctx,
+                                   w_rob_t *w_rob,
                                    dr_prepare_t *prep,
                                    uint16_t session_id,
                                    bool local, uint8_t m_id)
 {
 
   if (ENABLE_ASSERTIONS) {
-    assert(w_rob->w_state == INVALID);
+    if (w_rob->w_state != INVALID) {
+      print_w_rob_entry(ctx, w_rob);
+      dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
+      printf("Active writes %u/%u \n", dr_ctx->gid_rob_arr->size, W_ROB_SIZE);
+      assert(false);
+    }
   }
   if (local) w_rob->ptr_to_op = prep;
   else
@@ -47,6 +54,10 @@ static inline void insert_in_w_rob(w_rob_t *w_rob,
   if (ENABLE_ASSERTIONS) assert(w_rob->key.bkt > 0);
 
   w_rob->w_state = VALID;
+
+
+  // TODO REMOVE THIS LINE
+  if (!local) w_rob->w_state = READY;
 
 }
 
@@ -81,8 +92,10 @@ static inline void insert_prep_help(context_t *ctx, void* prep_ptr,
 
   // Bookkeeping
   gid_rob_t *gid_rob = get_and_set_gid_entry(ctx, prep->g_id);
+  //print_g_id_rob(ctx, gid_rob->rob_id);
   w_rob_t *w_rob = get_w_rob_ptr(dr_ctx, gid_rob, prep->g_id);
-  insert_in_w_rob(w_rob, prep, op->session_id, true, ctx->m_id);
+  //print_w_rob_entry(ctx, w_rob);
+  insert_in_w_rob(ctx, w_rob, prep, op->session_id, true, ctx->m_id);
   insert_in_local_w_rob_ptr(dr_ctx, w_rob);
 
   dr_ctx->inserted_w_id++;
@@ -99,7 +112,7 @@ static inline void fill_dr_ctx_entry(context_t *ctx,
   //w_rob_t *w_rob = (w_rob_t *) get_fifo_push_slot(dr_ctx->loc_w_rob_ptr);
   gid_rob_t *gid_rob = get_and_set_gid_entry(ctx, prep->g_id);
   w_rob_t *w_rob = get_w_rob_ptr(dr_ctx, gid_rob, prep->g_id);
-  insert_in_w_rob(w_rob, prep, 0, false, prep_mes->m_id);
+  insert_in_w_rob(ctx, w_rob, prep, 0, false, prep_mes->m_id);
 }
 
 
@@ -159,42 +172,7 @@ static inline void reset_dr_ctx_meta(context_t *ctx,
   dr_ctx->all_sessions_stalled = false;
 }
 
-static inline void reset_gid_rob(context_t *ctx)
-{
-  dr_ctx_t *dr_ctx = (dr_ctx_t *) ctx->appl_ctx;
-  gid_rob_t *gid_rob = get_g_id_rob_pull(dr_ctx);
-  if (ENABLE_ASSERTIONS)
-    assert(gid_rob->valid[gid_rob->first_valid]);
 
-  bool last = gid_rob->first_valid == GID_ROB_SIZE - 1;
-  bool last_valid = !gid_rob->valid[gid_rob->first_valid];
-
-  gid_rob->valid[gid_rob->first_valid] = false;
-
-  if (last || last_valid) {
-    gid_rob->empty = true;
-    if (ENABLE_ASSERTIONS) assert(gid_rob_is_empty(gid_rob));
-    gid_rob->first_valid = 0;
-
-  }
-  else {
-    gid_rob->first_valid++;
-    if (ENABLE_ASSERTIONS) {
-      assert(gid_rob->first_valid < GID_ROB_SIZE);
-      assert(gid_rob->valid[gid_rob->first_valid]);
-    }
-  }
-
-  if (last) {
-    gid_rob->base_gid += G_ID_BASE_JUMP;
-    MOD_INCR(dr_ctx->gid_rob_arr->pull_ptr, GID_ROB_NUM);
-    //if (get_g_id_rob_pull(dr_ctx)->empty) {
-    //  assert(all_gid_robs_are_empty(dr_ctx));
-    //  dr_ctx->gid_rob_arr->empty = true;
-    //}
-  }
-
-}
 
 static inline void reset_w_rob(w_rob_t *w_rob)
 {
