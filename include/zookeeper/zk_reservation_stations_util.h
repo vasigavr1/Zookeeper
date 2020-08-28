@@ -56,7 +56,7 @@ static inline void flr_increases_write_credits(context_t *ctx,
   if (ENABLE_ASSERTIONS) assert(*qp_meta->credits <= W_CREDITS);
 }
 
-static inline bool zk_write_not_ready(zk_com_mes_t *com,
+static inline bool zk_write_not_ready(ctx_com_mes_t *com,
                                       uint16_t com_ptr,
                                       uint16_t com_i,
                                       uint32_t com_num,
@@ -249,28 +249,6 @@ static inline void ldr_poll_credits(context_t *ctx)
 /* ---------------------------------------------------------------------------
 //------------------------------INSERTS --------------------------------
 //---------------------------------------------------------------------------*/
-
-// Add the acked gid to the appropriate commit message
-static inline void zk_insert_commit(context_t *ctx,
-                                    uint16_t update_op_i)
-{
-  zk_ckecks_when_creating_commits(ctx, update_op_i);
-  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-  fifo_t *send_fifo = ctx->qp_meta[COMMIT_W_QP_ID].send_fifo;
-  zk_com_mes_t *commit = (zk_com_mes_t *) get_fifo_push_prev_slot(send_fifo);
-
-  if (send_fifo->capacity > 0)
-    commit->com_num += update_op_i;
-  else { //otherwise push a new commit
-    commit->l_id = zk_ctx->local_w_id;
-    commit->com_num = update_op_i;
-    fifo_incr_capacity(send_fifo);
-  }
-  send_fifo->net_capacity += update_op_i;
-  slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
-  slot_meta->coalesce_num += update_op_i;
-}
-
 
 
 static inline void fill_prep(zk_prepare_t *prep, mica_key_t key, uint8_t opcode, uint8_t val_len,

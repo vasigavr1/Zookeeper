@@ -247,7 +247,7 @@ static inline void zk_debug_info_bookkeep(context_t *ctx,
 //---------------------------------------------------------------------------*/
 
 
-static inline void zk_check_polled_commit_and_print(zk_com_mes_t *com,
+static inline void zk_check_polled_commit_and_print(ctx_com_mes_t *com,
                                                     zk_ctx_t *zk_ctx,
                                                     uint32_t buf_ptr,
                                                     uint64_t l_id,
@@ -382,13 +382,13 @@ static inline void zk_ckecks_when_creating_commits(context_t *ctx,
 
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
   fifo_t *send_fifo = ctx->qp_meta[COMMIT_W_QP_ID].send_fifo;
-  zk_com_mes_t *commit = (zk_com_mes_t *) get_fifo_push_prev_slot(send_fifo);
+  ctx_com_mes_t *commit = (ctx_com_mes_t *) get_fifo_push_prev_slot(send_fifo);
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
 
   assert(update_op_i > 0);
   assert(commit->opcode == KVS_OP_PUT);
-  assert(send_fifo->mes_header == LDR_COM_SEND_SIZE);
-  assert(slot_meta->byte_size == LDR_COM_SEND_SIZE);
+  assert(send_fifo->mes_header == CTX_COM_SEND_SIZE);
+  assert(slot_meta->byte_size == CTX_COM_SEND_SIZE);
 
   if (send_fifo->capacity > 0) {
     if (ENABLE_ASSERTIONS) {
@@ -422,7 +422,7 @@ static inline void zk_checks_and_stats_on_bcasting_prepares(fifo_t *send_fifo,
 
 
 static inline void zk_checks_and_stats_on_bcasting_commits(fifo_t *send_fifo,
-                                                           zk_com_mes_t *com_mes,
+                                                           ctx_com_mes_t *com_mes,
                                                            uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {

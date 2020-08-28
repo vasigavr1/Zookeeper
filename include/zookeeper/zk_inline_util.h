@@ -442,9 +442,9 @@ static inline bool commit_handler(context_t *ctx)
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
-  volatile zk_com_mes_ud_t *incoming_coms = (volatile zk_com_mes_ud_t *) recv_fifo->fifo;
+  volatile ctx_com_mes_ud_t *incoming_coms = (volatile ctx_com_mes_ud_t *) recv_fifo->fifo;
 
-  zk_com_mes_t *com = (zk_com_mes_t *) &incoming_coms[recv_fifo->pull_ptr].com;
+  ctx_com_mes_t *com = (ctx_com_mes_t *) &incoming_coms[recv_fifo->pull_ptr].com;
   uint32_t com_num = com->com_num;
   uint64_t l_id = com->l_id;
   uint64_t pull_lid = zk_ctx->local_w_id; // l_id at the pull pointer
@@ -487,7 +487,7 @@ static inline void send_commits_helper(context_t *ctx)
 {
   per_qp_meta_t *qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
-  zk_com_mes_t *com_mes = (zk_com_mes_t *) get_fifo_pull_slot(send_fifo);
+  ctx_com_mes_t *com_mes = (ctx_com_mes_t *) get_fifo_pull_slot(send_fifo);
 
   if (DEBUG_COMMITS)
     my_printf(green, "Wrkr %u, Broadcasting commit %u, lid %lu, com_num %u \n",

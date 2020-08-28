@@ -13,8 +13,8 @@ void zk_print_parameters_in_the_start()
   my_printf(green, "---------------------------------------------------------- \n");
   if (ENABLE_ASSERTIONS) {
     my_printf(green, "COMMIT: commit message %lu/%d, commit message ud req %llu/%d\n",
-              sizeof(zk_com_mes_t), LDR_COM_SEND_SIZE,
-              sizeof(zk_com_mes_ud_t), FLR_COM_RECV_SIZE);
+              sizeof(ctx_com_mes_t), CTX_COM_SEND_SIZE,
+              sizeof(ctx_com_mes_ud_t), CTX_COM_RECV_SIZE);
     my_printf(cyan, "ACK: ack message %lu/%d, ack message ud req %llu/%d\n",
               sizeof(ctx_ack_mes_t), FLR_ACK_SEND_SIZE,
               sizeof(ctx_ack_mes_ud_t), LDR_ACK_RECV_SIZE);
@@ -58,7 +58,7 @@ void zk_static_assert_compile_parameters()
   assert((W_CREDITS % LDR_CREDIT_DIVIDER) == 0); // division better be perfect
   assert((COMMIT_CREDITS % FLR_CREDIT_DIVIDER) == 0); // division better be perfect
   assert(sizeof(ctx_ack_mes_ud_t) == LDR_ACK_RECV_SIZE);
-  assert(sizeof(zk_com_mes_ud_t) == FLR_COM_RECV_SIZE);
+  assert(sizeof(ctx_com_mes_ud_t) == CTX_COM_RECV_SIZE);
   assert(sizeof(zk_prep_mes_ud_t) == FLR_PREP_RECV_SIZE);
   assert(sizeof(zk_w_mes_ud_t) == LDR_W_RECV_SIZE);
   assert(SESSIONS_PER_THREAD < M_16);
@@ -136,9 +136,9 @@ void zk_ldr_qp_meta_init(per_qp_meta_t *qp_meta)
                      LDR_MAX_RECV_W_WRS, SEND_BCAST_LDR_RECV_UNI, RECV_REQ,
                      COMMIT_W_QP_ID,
                      FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_W_BUF_SLOTS,
-                     LDR_W_RECV_SIZE, LDR_COM_SEND_SIZE, ENABLE_MULTICAST, false,
+                     LDR_W_RECV_SIZE, CTX_COM_SEND_SIZE, ENABLE_MULTICAST, false,
                      COM_MCAST_QP, LEADER_MACHINE, COMMIT_FIFO_SIZE,
-                     COMMIT_CREDITS, LDR_COM_SEND_SIZE,
+                     COMMIT_CREDITS, CTX_COM_SEND_SIZE,
                      "send commits", "recv writes");
   ///
   create_per_qp_meta(&qp_meta[FC_QP_ID], 0, LDR_MAX_CREDIT_RECV, RECV_CREDITS, RECV_REPLY,
@@ -171,7 +171,7 @@ void zk_flr_qp_meta_init(per_qp_meta_t *qp_meta)
                      FLR_MAX_RECV_COM_WRS, SEND_UNI_REP_RECV_LDR_BCAST, RECV_SEC_ROUND,
                      COMMIT_W_QP_ID,
                      1, 1, COMMIT_CREDITS,
-                     FLR_COM_RECV_SIZE, FLR_W_SEND_SIZE, false, ENABLE_MULTICAST, COM_MCAST_QP,
+                     CTX_COM_RECV_SIZE, FLR_W_SEND_SIZE, false, ENABLE_MULTICAST, COM_MCAST_QP,
                      LEADER_MACHINE, W_FIFO_SIZE, W_CREDITS, W_MES_HEADER,
                      "send writes", "recv commits");
   ///
@@ -240,7 +240,7 @@ void zk_flr_qp_meta_mfs(context_t *ctx)
 void zk_init_ldr_send_fifos(context_t *ctx)
 {
   fifo_t *send_fifo = ctx->qp_meta[COMMIT_W_QP_ID].send_fifo;
-  zk_com_mes_t *commits = (zk_com_mes_t *) send_fifo->fifo;
+  ctx_com_mes_t *commits = (ctx_com_mes_t *) send_fifo->fifo;
 
   for (uint32_t i = 0; i < COMMIT_FIFO_SIZE; i++) {
     commits[i].opcode = KVS_OP_PUT;

@@ -58,9 +58,6 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 
 // -- COMMITS-----
 
-#define LDR_COM_SEND_SIZE (13) //l_id + com_mes_num + opcode
-#define FLR_COM_RECV_SIZE (GRH_SIZE + LDR_COM_SEND_SIZE)
-#define COM_ENABLE_INLINING ((LDR_COM_SEND_SIZE < MAXIMUM_INLINE_SIZE) ? 1: 0)
 #define COMMIT_FIFO_SIZE 1 //((COM_ENABLE_INLINING == 1) ? (COMMIT_CREDITS) : (COM_BCAST_SS_BATCH))
 
 //---WRITES---
@@ -159,7 +156,7 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 #define FLR_PREP_BUF_SLOTS (3 * PREPARE_CREDITS)
 #define FLR_PREP_BUF_SIZE (FLR_PREP_RECV_SIZE * FLR_PREP_BUF_SLOTS)
 #define FLR_COM_BUF_SLOTS (COMMIT_CREDITS)
-#define FLR_COM_BUF_SIZE (FLR_COM_RECV_SIZE * FLR_COM_BUF_SLOTS)
+#define FLR_COM_BUF_SIZE (CTX_COM_RECV_SIZE * FLR_COM_BUF_SLOTS)
 #define FLR_R_REP_BUF_SLOTS (R_CREDITS)
 #define FLR_R_REP_BUF_SIZE (R_REP_RECV_SIZE * FLR_R_REP_BUF_SLOTS)
 
@@ -273,19 +270,6 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 typedef enum op_state {INVALID, VALID, SENT, READY, SEND_COMMITTS} w_state_t;
 
 
-
-// The format of a commit message
-typedef struct zk_com_message {
-  uint64_t l_id;
-  uint32_t com_num;
-	uint8_t opcode;
-} __attribute__((__packed__)) zk_com_mes_t;
-
-// commit message plus the grh
-typedef struct zk_com_message_ud_req {
-	uint8_t grh[GRH_SIZE];
-  zk_com_mes_t com;
-} zk_com_mes_ud_t;
 
 typedef struct zk_prepare {
 	uint8_t flr_id;
