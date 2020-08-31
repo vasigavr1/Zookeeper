@@ -196,55 +196,6 @@ static inline void zk_signal_completion_and_bookkeep_for_writes(zk_ctx_t *zk_ctx
 }
 
 
-/* ---------------------------------------------------------------------------
-//------------------------------ BROADCASTS -----------------------------
-//---------------------------------------------------------------------------*/
-
-
-// Poll for credits and increment the credits according to the protocol
-static inline void ldr_poll_credits(context_t *ctx)
-
-{
-  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-  per_qp_meta_t *cred_qp_meta = &ctx->qp_meta[FC_QP_ID];
-  quorum_info_t *q_info = ctx->q_info;
-  uint16_t *credits = ctx->qp_meta[COMMIT_W_QP_ID].credits;
-  bool poll_for_credits = false;
-  for (uint8_t j = 0; j < q_info->active_num; j++) {
-    if (credits[q_info->active_ids[j]] == 0) {
-      poll_for_credits = true;
-      break;
-    }
-  }
-  if (!poll_for_credits) return;
-
-  int credits_found = 0;
-  credits_found = ibv_poll_cq(cred_qp_meta->recv_cq,
-                              LDR_MAX_CREDIT_RECV,
-                              cred_qp_meta->recv_wc);
-  if(credits_found > 0) {
-    if(unlikely(cred_qp_meta->recv_wc[credits_found - 1].status != 0)) {
-      fprintf(stderr, "Bad wc status when polling for credits to send a broadcast %d\n",
-              cred_qp_meta->recv_wc[credits_found -1].status);
-      assert(false);
-    }
-    cred_qp_meta->recv_info->posted_recvs -= credits_found;
-    for (uint32_t j = 0; j < credits_found; j++) {
-      credits[cred_qp_meta->recv_wc[j].imm_data]+= FLR_CREDITS_IN_MESSAGE;
-    }
-
-    post_recvs_with_recv_info(cred_qp_meta->recv_info,
-                              (uint32_t) credits_found);
-
-  }
-  else if(unlikely(credits_found < 0)) {
-    printf("ERROR In the credit CQ\n"); exit(0);
-  }
-
-
-}
-
-
 
 /* ---------------------------------------------------------------------------
 //------------------------------INSERTS --------------------------------
@@ -453,7 +404,7 @@ static inline void zk_fill_trace_op(context_t *ctx,
 
 
   zk_ctx->stalled[working_session] =
-    (is_update) || (USE_REMOTE_READS && zk_ctx->protocol == FOLLOWER);
+    (is_update) || (USE_LIN_READS && zk_ctx->protocol == FOLLOWER);
 
   if (ENABLE_CLIENTS) {
     signal_in_progress_to_client(op->session_id, op->index_to_req_array, ctx->t_id);

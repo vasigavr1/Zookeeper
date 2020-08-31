@@ -81,7 +81,7 @@ static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
     else if (resp[i].type == KVS_GET_SUCCESS) {
       if (ENABLE_ASSERTIONS) {
         assert(machine_id != LEADER_MACHINE);
-        assert(USE_REMOTE_READS);
+        assert(USE_LIN_READS);
       }
       ctx_insert_mes(ctx, R_QP_ID, R_SIZE, (uint32_t) R_REP_BIG_SIZE, false, NULL, NOT_USED);
     }
@@ -104,30 +104,6 @@ static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
 /* ---------------------------------------------------------------------------
 //------------------------------UNICASTS -----------------------------
 //---------------------------------------------------------------------------*/
-
-//Send credits for the commits
-static inline void send_credits_for_commits(context_t *ctx,
-                                            uint16_t credit_num)
-{
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[FC_QP_ID];
-  struct ibv_send_wr *bad_send_wr;
-  // RECEIVES FOR COMMITS
-  uint32_t recvs_to_post_num = (uint32_t) (credit_num * FLR_CREDITS_IN_MESSAGE);
-  if (ENABLE_ASSERTIONS) assert(recvs_to_post_num < FLR_MAX_RECV_COM_WRS);
-  post_recvs_with_recv_info(ctx->qp_meta[COMMIT_W_QP_ID].recv_info, recvs_to_post_num);
-  //printf("FLR %d posting %u recvs and has a total of %u recvs for commits \n",
-  //		    t_id, recvs_to_post_num,  com_recv_info->posted_recvs);
-
-  for (uint16_t credit_wr_i = 0; credit_wr_i < credit_num; credit_wr_i++) {
-    selective_signaling_for_unicast(&qp_meta->sent_tx, qp_meta->ss_batch, qp_meta->send_wr,
-                                    credit_wr_i, qp_meta->send_cq, true,
-                                    "sending credits", ctx->t_id);
-  }
-  qp_meta->send_wr[credit_num - 1].next = NULL;
-  //my_printf(yellow, "I am sending %d credit message(s)\n", credit_num);
-  int ret = ibv_post_send(qp_meta->send_qp, &qp_meta->send_wr[0], &bad_send_wr);
-  CPE(ret, "ibv_post_send error in credits", ret);
-}
 
 static inline void send_writes_helper(context_t *ctx)
 {
@@ -176,7 +152,10 @@ static inline void send_r_reps_helper(context_t *ctx)
 
 }
 
-
+static inline void send_acks_helper(context_t *ctx)
+{
+  ctx_refill_recvs(ctx, COMMIT_W_QP_ID);
+}
 
 /* ---------------------------------------------------------------------------
 //------------------------------ GID HANDLING -----------------------------
@@ -268,6 +247,10 @@ static inline bool ack_handler(context_t *ctx)
   uint32_t ack_ptr; // a pointer in the FIFO, from where ack should be added
   zk_check_polled_ack_and_print(ack, ack_num, pull_lid, recv_fifo->pull_ptr, ctx->t_id);
   ctx_increase_credits_on_polling_ack(ctx, PREP_ACK_QP_ID, ack);
+
+  per_qp_meta_t *com_qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
+  com_qp_meta->credits[ack->m_id] = com_qp_meta->max_credits;
+
   if ((zk_ctx->w_rob->capacity == 0 ) ||
       (pull_lid >= l_id && (pull_lid - l_id) >= ack_num))
     return true;
@@ -474,7 +457,7 @@ static inline bool commit_handler(context_t *ctx)
     t_stats[ctx->t_id].received_coms_mes_num++;
   }
   if (recv_fifo->pull_ptr % FLR_CREDITS_IN_MESSAGE == 0)
-    send_credits_for_commits(ctx, 1);
+    ;//send_credits_for_commits(ctx, 1);
 
   return true;
 }
@@ -587,11 +570,7 @@ static inline void ldr_main_loop(context_t *ctx)
   propagate_updates(ctx);
   check_ldr_p_states(ctx);
 
-  ldr_poll_credits(ctx);
-
   ctx_send_broadcasts(ctx, COMMIT_W_QP_ID);
-
-
 
   // Get a new batch from the trace, pass it through the cache and create
   // the appropriate prepare messages
@@ -611,9 +590,6 @@ static inline void ldr_main_loop(context_t *ctx)
 
 
   ctx_send_unicasts(ctx, R_QP_ID);
-
-
-
 }
 
 static inline void main_loop(context_t *ctx)

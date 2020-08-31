@@ -141,12 +141,6 @@ void zk_ldr_qp_meta_init(per_qp_meta_t *qp_meta)
                      COMMIT_CREDITS, CTX_COM_SEND_SIZE,
                      "send commits", "recv writes");
   ///
-  create_per_qp_meta(&qp_meta[FC_QP_ID], 0, LDR_MAX_CREDIT_RECV, RECV_CREDITS, RECV_REPLY,
-                     FC_QP_ID, 0, FOLLOWER_MACHINE_NUM, 0,
-                     0, 0, false, false,
-                     0, LEADER_MACHINE, 0, 0, 0,
-                     NULL, "recv credits");
-  ///
   create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_REP_WRS, MAX_RECV_R_WRS, SEND_UNI_REP_LDR_RECV_UNI_REQ, RECV_REQ,
                      R_QP_ID,
                      FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_R_BUF_SLOTS,
@@ -174,11 +168,6 @@ void zk_flr_qp_meta_init(per_qp_meta_t *qp_meta)
                      CTX_COM_RECV_SIZE, FLR_W_SEND_SIZE, false, ENABLE_MULTICAST, COM_MCAST_QP,
                      LEADER_MACHINE, W_FIFO_SIZE, W_CREDITS, W_MES_HEADER,
                      "send writes", "recv commits");
-  ///
-  create_per_qp_meta(&qp_meta[FC_QP_ID], FLR_MAX_CREDIT_WRS, 0, SEND_CREDITS_LDR_RECV_NONE, RECV_NOTHING,
-                     FC_QP_ID, 1,
-                     0, 0, 0, 0, false, false, 0, LEADER_MACHINE, 0, 0, 0,
-                     "send credits", "recv nothing");
   ///
   create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_WRS, MAX_RECV_R_REP_WRS, SEND_UNI_REQ_RECV_LDR_REP, RECV_REPLY,
                      R_QP_ID, 1, 1,
@@ -219,6 +208,7 @@ void zk_flr_qp_meta_mfs(context_t *ctx)
 {
   mf_t *mfs = calloc(QP_NUM, sizeof(mf_t));
 
+  mfs[PREP_ACK_QP_ID].send_helper = send_acks_helper;
   mfs[PREP_ACK_QP_ID].recv_handler = prepare_handler;
   mfs[PREP_ACK_QP_ID].polling_debug = zk_debug_info_bookkeep;
 

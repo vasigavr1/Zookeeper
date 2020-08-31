@@ -57,7 +57,6 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 
 
 // -- COMMITS-----
-
 #define COMMIT_FIFO_SIZE 1 //((COM_ENABLE_INLINING == 1) ? (COMMIT_CREDITS) : (COM_BCAST_SS_BATCH))
 
 //---WRITES---
@@ -199,47 +198,22 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 #define R_REP_SS_BATCH MAX(MIN_SS_BATCH, (MAX_R_REP_WRS + 1))
 
 
-#define FOLLOWER_QP_NUM 4 /* The number of QPs for the follower */
-#define LEADER_QP_NUM 4 /* The number of QPs for the leader */
-#define QP_NUM 4
+#define QP_NUM 3
 #define PREP_ACK_QP_ID 0
 #define COMMIT_W_QP_ID 1
-#define FC_QP_ID 2
-#define R_QP_ID 3
+#define R_QP_ID 2
 
 /*
  * -------LEADER-------------
  * 1st Dgram send Prepares -- receive ACKs
  * 2nd Dgram send Commits  -- receive Writes
- * 3rd Dgram  -- receive Credits
+ * 3rd Dgram  -- receive reads -- send r_reps
  *
  * ------FOLLOWER-----------
  * 1st Dgram receive prepares -- send Acks
  * 2nd Dgram receive Commits  -- send Writes
- * 3rd Dgram  send Credits
+ * 3rd Dgram send Reads receive R_Reps
  * */
-
-// LDR - Receive
-#define LDR_RECV_ACK_Q_DEPTH (LDR_MAX_RECV_ACK_WRS + 3)
-#define LDR_RECV_W_Q_DEPTH  (LDR_MAX_RECV_W_WRS + 3) //
-#define LDR_RECV_CR_Q_DEPTH (LDR_MAX_CREDIT_RECV + 3) //()
-#define LDR_RECV_R_Q_DEPTH (MAX_RECV_R_WRS + 3)
-// LDR - Send
-#define LDR_SEND_PREP_Q_DEPTH ((PREP_BCAST_SS_BATCH * FOLLOWER_MACHINE_NUM) + 10 ) //
-#define LDR_SEND_COM_Q_DEPTH ((COM_BCAST_SS_BATCH * FOLLOWER_MACHINE_NUM) + 10 ) //
-#define LDR_SEND_CR_Q_DEPTH 1 //()
-#define LDR_SEND_R_REP_Q_DEPTH (R_REP_SS_BATCH + 3)
-
-// FLR - Receive
-#define FLR_RECV_PREP_Q_DEPTH (FLR_MAX_RECV_PREP_WRS + 3) //
-#define FLR_RECV_COM_Q_DEPTH (FLR_MAX_RECV_COM_WRS + 3) //
-#define FLR_RECV_CR_Q_DEPTH 1 //()
-#define FLR_RECV_R_REP_Q_DEPTH (MAX_RECV_R_REP_WRS + 3)
-// FLR - Send
-#define FLR_SEND_ACK_Q_DEPTH (ACK_SEND_SS_BATCH + 3) //
-#define FLR_SEND_W_Q_DEPTH (WRITE_SS_BATCH + 3) //
-#define FLR_SEND_CR_Q_DEPTH (COM_CREDIT_SS_BATCH + 3) //
-#define FLR_SEND_R_Q_DEPTH (R_SS_BATCH + 3) //
 
 
 // DEBUG

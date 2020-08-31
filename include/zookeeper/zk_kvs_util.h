@@ -84,7 +84,7 @@ static inline void zk_KVS_batch_op_trace(zk_ctx_t *zk_ctx, uint16_t op_num,
       assert(false);
     }
     if (op[op_i].opcode == KVS_OP_GET ) {
-      if (!USE_REMOTE_READS || machine_id == LEADER_MACHINE) {
+      if (!USE_LIN_READS || machine_id == LEADER_MACHINE) {
         KVS_local_read(kv_ptr[op_i], op[op_i].value_to_read, &resp[op_i].type, t_id);
       }
       else {
