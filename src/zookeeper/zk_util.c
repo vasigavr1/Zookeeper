@@ -8,9 +8,7 @@ atomic_uint_fast64_t global_w_id, committed_global_w_id;
 
 void zk_print_parameters_in_the_start()
 {
-  my_printf(green, "---------------------------------------------------------- \n");
-  my_printf(green, "------------------------ZOOKEEPER------------------------- \n");
-  my_printf(green, "---------------------------------------------------------- \n");
+  emphatic_print(green, "ZOOKEEPER");
   if (ENABLE_ASSERTIONS) {
     my_printf(green, "COMMIT: commit message %lu/%d, commit message ud req %llu/%d\n",
               sizeof(ctx_com_mes_t), CTX_COM_SEND_SIZE,

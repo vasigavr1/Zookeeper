@@ -248,6 +248,7 @@ static inline bool ack_handler(context_t *ctx)
   zk_check_polled_ack_and_print(ack, ack_num, pull_lid, recv_fifo->pull_ptr, ctx->t_id);
   ctx_increase_credits_on_polling_ack(ctx, PREP_ACK_QP_ID, ack);
 
+  // increasing COMMIT credits
   per_qp_meta_t *com_qp_meta = &ctx->qp_meta[COMMIT_W_QP_ID];
   com_qp_meta->credits[ack->m_id] = com_qp_meta->max_credits;
 

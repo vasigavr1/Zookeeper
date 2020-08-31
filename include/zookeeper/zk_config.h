@@ -11,15 +11,15 @@
 // CORE CONFIGURATION
 #define R_CREDITS 5
 #define MAX_READ_SIZE 300 //300 in terms of bytes for Reads
-#define W_CREDITS 6
-#define MAX_W_COALESCE 6
-#define PREPARE_CREDITS 6
-#define MAX_PREP_COALESCE 9
+#define W_CREDITS 2
+#define MAX_W_COALESCE 16
+#define PREPARE_CREDITS 10
+#define MAX_PREP_COALESCE 16
 #define COMMIT_CREDITS 30
 #define FEED_FROM_TRACE 0
 
 #define MAKE_FOLLOWERS_PASSIVE 0
-#define ENABLE_GIDS 1 // should ldr tag writes with unique ids // this is useful for remote reads
+#define ENABLE_GIDS 0 // should ldr tag writes with unique ids // this is useful for remote reads
 #define ENABLE_GID_ORDERING (ENABLE_GIDS ? 1 : 0) // should global write ordering occur
 #define DISABLE_UPDATING_KVS 0
 #define USE_LIN_READS (ENABLE_GIDS ? 1 : 0)
