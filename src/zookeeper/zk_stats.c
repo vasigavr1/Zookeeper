@@ -38,8 +38,8 @@ void zk_stats(stats_ctx_t *ctx)
                                     (double) (curr_w_stats[i].coms_sent_mes_num -
                                               prev_w_stats[i].coms_sent_mes_num);
       all_stats.prep_batch_size[i] = (curr_w_stats[i].preps_sent - prev_w_stats[i].preps_sent) /
-                                     (double) (curr_w_stats[i].preps_sent_mes_num -
-                                               prev_w_stats[i].preps_sent_mes_num);
+                                     (double) (curr_w_stats[i].prep_sent_mes_num -
+                                               prev_w_stats[i].prep_sent_mes_num);
     }
     else {
       all_stats.ack_batch_size[i] = (curr_w_stats[i].acks_sent - prev_w_stats[i].acks_sent) /
@@ -88,44 +88,3 @@ void zk_stats(stats_ctx_t *ctx)
 }
 
 
-//assuming microsecond latency
-void print_latency_stats(void){
-  //uint8_t protocol = LEADER;
-  FILE *latency_stats_fd;
-  int i = 0;
-  char filename[128];
-  char* path = "../../results/latency";
-  const char * exectype[] = {
-    "BS", //baseline
-    "SC", //Sequential Consistency
-    "LIN", //Linearizability (non stalling)
-    "SS" //Strong Consistency (stalling)
-  };
-
-  char workload[10];
-  if (MEASURE_READ_LATENCY == 0) sprintf(workload, "WRITES");
-  else if (MEASURE_READ_LATENCY == 1) sprintf(workload, "READS");
-  else  sprintf(workload, "MIXED");
-  sprintf(filename, "%s/latency_%s_w_%d%s_%s.csv", path,
-          "ZOOK",
-          (WRITE_RATIO / 10), "%",
-          workload);
-
-  latency_stats_fd = fopen(filename, "w");
-
-  fprintf(latency_stats_fd, "#---------------- Hot Reads ----------------\n");
-  for(i = 0; i < LATENCY_BUCKETS; ++i)
-    fprintf(latency_stats_fd, "reads: %d, %d\n",i * (MAX_LATENCY / LATENCY_BUCKETS), latency_count.reads[i]);
-  fprintf(latency_stats_fd, "reads: -1, %d\n", latency_count.reads[LATENCY_BUCKETS]); //print outliers
-  fprintf(latency_stats_fd, "reads-hl: %d\n", latency_count.max_read_lat); //print max
-
-  fprintf(latency_stats_fd, "#---------------- Hot Writes ---------------\n");
-  for(i = 0; i < LATENCY_BUCKETS; ++i)
-    fprintf(latency_stats_fd, "writes: %d, %d\n",i * (MAX_LATENCY / LATENCY_BUCKETS), latency_count.writes[i]);
-  fprintf(latency_stats_fd, "writes: -1, %d\n", latency_count.writes[LATENCY_BUCKETS]); //print outliers
-  fprintf(latency_stats_fd, "writes-hl: %d\n", latency_count.max_write_lat); //print max
-
-  fclose(latency_stats_fd);
-
-  printf("Latency stats saved at %s\n", filename);
-}

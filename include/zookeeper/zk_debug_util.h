@@ -38,7 +38,7 @@ static inline char* prot_to_str(protocol_t protocol)
 static inline void print_ldr_stats (uint16_t t_id)
 {
 
-  my_printf(yellow, "Prepares sent %ld/%ld \n", t_stats[t_id].preps_sent_mes_num, t_stats[t_id].preps_sent );
+  my_printf(yellow, "Prepares sent %ld/%ld \n", t_stats[t_id].prep_sent_mes_num, t_stats[t_id].preps_sent );
   my_printf(yellow, "Acks Received %ld/%ld/%ld \n",
             t_stats[t_id].received_acks_mes_num, t_stats[t_id].received_acks,
             t_stats[t_id].received_acks / FOLLOWER_MACHINE_NUM);
@@ -416,7 +416,7 @@ static inline void zk_checks_and_stats_on_bcasting_prepares(fifo_t *send_fifo,
   if (ENABLE_STAT_COUNTING) {
     t_stats[t_id].preps_sent +=
       coalesce_num;
-    t_stats[t_id].preps_sent_mes_num++;
+    t_stats[t_id].prep_sent_mes_num++;
   }
 }
 
@@ -601,16 +601,6 @@ static inline void check_unicast_before_send(context_t *ctx,
 //------------------------------TRACE --------------------------------
 //---------------------------------------------------------------------------*/
 
-static inline void zk_check_op(zk_trace_op_t *op)
-{
-  if (ENABLE_ASSERTIONS) {
-    check_state_with_allowed_flags(3, op->opcode, KVS_OP_PUT, KVS_OP_GET);
-    assert(op->real_val_len > 0);
-    assert(op->index_to_req_array < PER_SESSION_REQ_NUM);
-    assert(op->session_id < SESSIONS_PER_THREAD);
-    assert(op->key.bkt > 0);
-  }
-}
 
 static inline void checks_when_leader_creates_write(zk_prep_mes_t *preps, uint32_t prep_ptr,
                                                     uint32_t inside_prep_ptr, zk_ctx_t *zk_ctx,

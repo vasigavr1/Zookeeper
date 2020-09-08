@@ -16,7 +16,7 @@
 
 static inline void zk_KVS_remote_read(zk_ctx_t *zk_ctx,
                                       mica_op_t *kv_ptr,
-                                      zk_trace_op_t *op,
+                                      ctx_trace_op_t *op,
                                       zk_resp_t *resp,
                                       uint32_t *r_push_ptr_,
                                       uint16_t t_id)
@@ -36,7 +36,7 @@ static inline void zk_KVS_remote_read(zk_ctx_t *zk_ctx,
   r_rob->val_len = op->val_len;
   r_rob->value_to_read = op->value_to_read;
   r_rob->sess_id = op->session_id;
-  assert(zk_ctx->stalled[r_rob->sess_id]);
+  if (ENABLE_ASSERTIONS) assert(zk_ctx->stalled[r_rob->sess_id]);
   r_rob->state = VALID;
   r_rob->l_id = zk_ctx->local_r_id + zk_ctx->r_rob->capacity ;
   resp->type = KVS_GET_SUCCESS;
@@ -48,7 +48,7 @@ static inline void zk_KVS_remote_read(zk_ctx_t *zk_ctx,
 /* The leader and follower send their local requests to this, reads get served
  * But writes do not get served, writes are only propagated here to see whether their keys exist */
 static inline void zk_KVS_batch_op_trace(zk_ctx_t *zk_ctx, uint16_t op_num,
-                                         zk_trace_op_t *op, zk_resp_t *resp,
+                                         ctx_trace_op_t *op, zk_resp_t *resp,
                                          uint16_t t_id)
 {
   uint16_t op_i;

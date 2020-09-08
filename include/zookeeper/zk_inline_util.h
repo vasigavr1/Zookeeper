@@ -15,7 +15,7 @@
 static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
 {
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-  zk_trace_op_t *ops = zk_ctx->ops;
+  ctx_trace_op_t *ops = zk_ctx->ops;
   zk_resp_t *resp = zk_ctx->resp;
   trace_t *trace = zk_ctx->trace;
 
@@ -44,7 +44,10 @@ static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
   /// main loop
   while (op_i < ZK_TRACE_BATCH && !passed_over_all_sessions) {
 
-    zk_fill_trace_op(ctx, &trace[zk_ctx->trace_iter], &ops[op_i], working_session);
+    ctx_fill_trace_op(ctx, &trace[zk_ctx->trace_iter], &ops[op_i], working_session);
+    zk_ctx->stalled[working_session] =
+      ops[op_i].opcode == KVS_OP_PUT || (USE_LIN_READS && zk_ctx->protocol == FOLLOWER);
+
     while (!pull_request_from_this_session(zk_ctx->stalled[working_session],
                                            (uint16_t) working_session, ctx->t_id)) {
 

@@ -252,7 +252,7 @@ static inline uint16_t fill_prepare_based_on_source(context_t *ctx,
 
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
   if (source_flag == LOCAL_PREP) {
-    zk_trace_op_t *op = (zk_trace_op_t *) source;
+    ctx_trace_op_t *op = (ctx_trace_op_t *) source;
     fill_prep(prep, op->key, op->opcode, op->val_len, op->value_to_write,
               ctx->m_id, (uint16_t)  op->session_id);
     zk_ctx->index_to_req_array[op->session_id] = op->index_to_req_array;
@@ -311,7 +311,7 @@ static inline void insert_write_help(context_t *ctx, void *w_ptr,
   zk_write_t *write = (zk_write_t *) w_ptr;
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
 
-  zk_trace_op_t *op = (zk_trace_op_t *) source;
+  ctx_trace_op_t *op = (ctx_trace_op_t *) source;
   fill_write(write, op->key, op->opcode, op->val_len, op->value_to_write,
              ctx->m_id, op->session_id);
   zk_ctx->index_to_req_array[op->session_id] = op->index_to_req_array;
@@ -378,67 +378,9 @@ static inline void insert_read_help(context_t *ctx, void *r_ptr,
 }
 
 
-
-/* ---------------------------------------------------------------------------
-//------------------------------TRACE --------------------------------
-//---------------------------------------------------------------------------*/
-
-static inline void zk_fill_trace_op(context_t *ctx,
-                                    trace_t *trace_op,
-                                    zk_trace_op_t *op,
-                                    int working_session)
-{
-  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
-  create_inputs_of_op(&op->value_to_write, &op->value_to_read, &op->real_val_len,
-                      &op->opcode, &op->index_to_req_array,
-                      &op->key, op->value, trace_op, working_session, ctx->t_id);
-
-  zk_check_op(op);
-
-  if (ENABLE_ASSERTIONS) assert(op->opcode != NOP);
-  bool is_update = op->opcode == KVS_OP_PUT;
-  if (WRITE_RATIO >= 1000) assert(is_update);
-   op->val_len = is_update ? (uint8_t) (VALUE_SIZE >> SHIFT_BITS) : (uint8_t) 0;
-
-  op->session_id = (uint16_t) working_session;
-
-
-  zk_ctx->stalled[working_session] =
-    (is_update) || (USE_LIN_READS && zk_ctx->protocol == FOLLOWER);
-
-  if (ENABLE_CLIENTS) {
-    signal_in_progress_to_client(op->session_id, op->index_to_req_array, ctx->t_id);
-    if (ENABLE_ASSERTIONS) assert(interface[ctx->t_id].wrkr_pull_ptr[working_session] == op->index_to_req_array);
-    MOD_INCR(interface[ctx->t_id].wrkr_pull_ptr[working_session], PER_SESSION_REQ_NUM);
-  }
-
-  if (ENABLE_ASSERTIONS == 1) {
-    assert(WRITE_RATIO > 0 || is_update == 0);
-    if (is_update) assert(op->val_len > 0);
-  }
-}
-
-
 /* ---------------------------------------------------------------------------
 //------------------------------ -----------------------------
 //---------------------------------------------------------------------------*/
-
-
-
-static inline void zk_increase_prep_credits(uint16_t *credits, ctx_ack_mes_t *ack,
-                                            struct fifo *remote_prep_buf, uint16_t t_id)
-{
-  uint8_t rm_id = (uint8_t) (ack->m_id > LEADER_MACHINE ? ack->m_id - 1 : ack->m_id);
-  credits[ack->m_id] +=
-    remove_from_the_mirrored_buffer(remote_prep_buf, ack->ack_num, t_id, rm_id, FLR_PREP_BUF_SLOTS);
-
-  if (ENABLE_ASSERTIONS) {
-    if (credits[ack->m_id] > PREPARE_CREDITS)
-      my_printf(red, "Prepare credits %u for follower %u \n", credits[ack->m_id], ack->m_id);
-  }
-}
-
-
 static inline void zk_apply_acks(uint32_t ack_num, uint32_t ack_ptr,
                                  uint64_t l_id, zk_ctx_t *zk_ctx,
                                  uint64_t pull_lid, uint32_t *outstanding_prepares,

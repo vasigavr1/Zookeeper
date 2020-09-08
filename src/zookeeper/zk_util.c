@@ -318,7 +318,7 @@ zk_ctx_t *set_up_zk_ctx(context_t *ctx)
 
   zk_ctx->stalled = (bool *) malloc(SESSIONS_PER_THREAD * sizeof(bool));
 
-  zk_ctx->ops = (zk_trace_op_t *) calloc((size_t) ZK_TRACE_BATCH, sizeof(zk_trace_op_t));
+  zk_ctx->ops = (ctx_trace_op_t *) calloc((size_t) ZK_TRACE_BATCH, sizeof(ctx_trace_op_t));
   zk_ctx->resp = (zk_resp_t*) calloc((size_t) ZK_TRACE_BATCH, sizeof(zk_resp_t));
   for(i = 0; i <  ZK_TRACE_BATCH; i++) zk_ctx->resp[i].type = EMPTY;
 
