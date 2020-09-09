@@ -352,7 +352,7 @@ static inline void insert_prep_help(context_t *ctx, void* prep_ptr,
   w_rob->is_local = source_flag == LOCAL_PREP;
   w_rob->session_id = (uint32_t) session_id;
   fifo_incr_push_ptr(zk_ctx->w_rob);
-  fifo_incr_capacity(zk_ctx->w_rob);
+  fifo_increm_capacity(zk_ctx->w_rob);
 }
 
 static inline void insert_read_help(context_t *ctx, void *r_ptr,

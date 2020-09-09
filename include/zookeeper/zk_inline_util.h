@@ -376,8 +376,6 @@ static inline bool r_handler(context_t *ctx)
       assert(read->opcode == KVS_OP_GET);
       assert(read->key.bkt > 0);
     }
-
-
     ptrs_to_r->ptr_to_ops[ptrs_to_r->polled_reads] = read;
     ptrs_to_r->ptr_to_r_mes[ptrs_to_r->polled_reads] = r_mes;
     ptrs_to_r->coalesce_r_rep[ptrs_to_r->polled_reads] = r_i > 0;
@@ -416,7 +414,7 @@ static inline bool prepare_handler(context_t *ctx)
     zk_check_prepare_and_print(&prepare[prep_i], zk_ctx, prep_i, ctx->t_id);
     fill_zk_ctx_entry(zk_ctx, &prepare[prep_i], ctx->m_id, ctx->t_id);
     fifo_incr_push_ptr(zk_ctx->w_rob);
-    fifo_incr_capacity(zk_ctx->w_rob);
+    fifo_increm_capacity(zk_ctx->w_rob);
   } ///
 
   if (ENABLE_ASSERTIONS) prep_mes->opcode = 0;

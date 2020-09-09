@@ -42,7 +42,7 @@ static inline void zk_KVS_remote_read(zk_ctx_t *zk_ctx,
   resp->type = KVS_GET_SUCCESS;
   MOD_INCR(r_push_ptr, FLR_PENDING_READS);
   (*r_push_ptr_) =  r_push_ptr;
-  fifo_incr_capacity(zk_ctx->r_rob);
+  fifo_increm_capacity(zk_ctx->r_rob);
 }
 
 /* The leader and follower send their local requests to this, reads get served
