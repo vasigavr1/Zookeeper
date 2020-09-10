@@ -416,9 +416,9 @@ typedef struct zk_ctx {
 
 	bool all_sessions_stalled;
   protocol_t protocol;
-  //uint32_t polled_messages;
 
 	uint32_t wait_for_gid_dbg_counter;
+  uint32_t stalled_sessions_dbg_counter;
 } zk_ctx_t;
 
 

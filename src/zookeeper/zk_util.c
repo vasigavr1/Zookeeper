@@ -122,7 +122,7 @@ void zk_ldr_qp_meta_init(per_qp_meta_t *qp_meta)
 {
   ///
   create_per_qp_meta(&qp_meta[PREP_ACK_QP_ID], LDR_MAX_PREP_WRS,
-                     LDR_MAX_RECV_ACK_WRS, SEND_BCAST_LDR_RECV_UNI,  RECV_REPLY,
+                     LDR_MAX_RECV_ACK_WRS, SEND_BCAST_LDR_RECV_UNI, RECV_REPLY,
                      PREP_ACK_QP_ID,
                      FOLLOWER_MACHINE_NUM, FOLLOWER_MACHINE_NUM, LEADER_ACK_BUF_SLOTS,
                      LDR_ACK_RECV_SIZE, LDR_PREP_SEND_SIZE, ENABLE_MULTICAST, false,
