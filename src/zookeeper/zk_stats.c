@@ -54,37 +54,34 @@ void zk_stats(stats_ctx_t *ctx)
   memcpy(prev_w_stats, curr_w_stats, num_threads * (sizeof(struct thread_stats)));
   total_throughput = (all_clients_cache_hits) / seconds;
 
-  printf("---------------PRINT %d time elapsed %.2f---------------\n", print_count, seconds / MILLION);
-  my_printf(green, "SYSTEM MIOPS: %.2f \n", total_throughput);
-  for (int i = 0; i < num_threads; i++) {
-    my_printf(cyan, "T%d: ", i);
-    my_printf(yellow, "%.2f MIOPS, STALL: GID: %.2f/s, ACK/PREP %.2f/s, COM/CREDIT %.2f/s", i,
-              all_stats.cache_hits_per_thread[i],
-              all_stats.stalled_gid[i],
-              all_stats.stalled_ack_prep[i],
-              all_stats.stalled_com_credit[i]);
-    if (machine_id == LEADER_MACHINE) {
-      my_printf(yellow, ", BATCHES: GID %.2f, Coms %.2f, Preps %.2f ",
-                all_stats.batch_size_per_thread[i],
-                all_stats.com_batch_size[i],
-                all_stats.prep_batch_size[i]);
+  if (!SHOW_STATS_LATENCY_STYLE) {
+    printf("---------------PRINT %d time elapsed %.2f---------------\n", print_count, seconds / MILLION);
+    my_printf(green, "SYSTEM MIOPS: %.2f \n", total_throughput);
+    for (int i = 0; i < num_threads; i++) {
+      my_printf(cyan, "T%d: ", i);
+      my_printf(yellow, "%.2f MIOPS, STALL: GID: %.2f/s, ACK/PREP %.2f/s, COM/CREDIT %.2f/s", i,
+                all_stats.cache_hits_per_thread[i],
+                all_stats.stalled_gid[i],
+                all_stats.stalled_ack_prep[i],
+                all_stats.stalled_com_credit[i]);
+      if (machine_id == LEADER_MACHINE) {
+        my_printf(yellow, ", BATCHES: GID %.2f, Coms %.2f, Preps %.2f ",
+                  all_stats.batch_size_per_thread[i],
+                  all_stats.com_batch_size[i],
+                  all_stats.prep_batch_size[i]);
+      }
+      else {
+        my_printf(yellow, ", BATCHES: Acks %.2f, Ws %.2f ",
+                  all_stats.ack_batch_size[i],
+                  all_stats.write_batch_size[i]);
+      }
+      //if (i > 0 && i % 2 == 0)
+      printf("\n");
     }
-    else {
-      my_printf(yellow, ", BATCHES: Acks %.2f, Ws %.2f ",
-                all_stats.ack_batch_size[i],
-                all_stats.write_batch_size[i]);
-    }
-    //if (i > 0 && i % 2 == 0)
     printf("\n");
+    printf("---------------------------------------\n");
   }
-  printf("\n");
-  printf("---------------------------------------\n");
-  if (ENABLE_CACHE_STATS == 1)
-    //print_cache_stats(start, machine_id);
-    // // Write to a file all_clients_throughput, per_worker_remote_throughput[], per_worker_local_throughput[]
-    if (DUMP_STATS_2_FILE == 1)
-      dump_stats_2_file(&all_stats);
-  my_printf(green, "SYSTEM MIOPS: %.2f \n", total_throughput);
+  my_printf(green, "%u. SYSTEM MIOPS: %.2f \n", print_count, total_throughput);
 }
 
 

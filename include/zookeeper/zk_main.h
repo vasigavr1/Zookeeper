@@ -2,7 +2,7 @@
 #define ZOOKEEPER_MAIN_H
 
 #include <rdma_gen_util.h>
-#include <fifo.h>
+#include "../../../odlib/include/fifo/fifo.h"
 #include <network_context.h>
 #include "top.h"
 
