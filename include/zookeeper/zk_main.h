@@ -70,9 +70,9 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 
 //---READS---
 #define R_MES_HEADER (10) // local id + coalesce num + m_id
-#define EFFECTIVE_MAX_R_SIZE (MAX_READ_SIZE - R_MES_HEADER)
+//#define EFFECTIVE_MAX_R_SIZE (MAX_READ_SIZE - R_MES_HEADER)
 #define R_SIZE (17) // key +g_id + opcode
-#define R_COALESCE (EFFECTIVE_MAX_R_SIZE / R_SIZE)
+//#define R_COALESCE (EFFECTIVE_MAX_R_SIZE / R_SIZE)
 #define R_MES_SIZE (R_MES_HEADER + (R_SIZE * R_COALESCE))
 #define R_SEND_SIZE R_MES_SIZE
 #define MAX_READ_COALESCE R_COALESCE
