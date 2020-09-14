@@ -583,7 +583,7 @@ static inline void ldr_main_loop(context_t *ctx)
   ctx_send_unicasts(ctx, R_QP_ID);
 }
 
-static inline void main_loop(context_t *ctx)
+static inline void zk_main_loop(context_t *ctx)
 {
   zk_ctx_t * zk_ctx =(zk_ctx_t *) ctx->appl_ctx;
   while (true) {

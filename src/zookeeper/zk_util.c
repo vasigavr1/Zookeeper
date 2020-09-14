@@ -349,31 +349,6 @@ zk_ctx_t *set_up_zk_ctx(context_t *ctx)
 
 
 
-// Prepost Receives on the Leader Side
-// Post receives for the coherence traffic in the init phase
-void pre_post_recvs(uint32_t* push_ptr, struct ibv_qp *recv_qp, uint32_t lkey, void* buf,
-                    uint32_t max_reqs, uint32_t number_of_recvs, uint16_t QP_ID, uint32_t message_size)
-{
-  uint32_t i;//, j;
-  for(i = 0; i < number_of_recvs; i++) {
-        hrd_post_dgram_recv(recv_qp,	(buf + *push_ptr * message_size),
-                            message_size, lkey);
-      MOD_INCR(*push_ptr, max_reqs);
-  }
-}
-
-
-
-
-void check_protocol(int protocol)
-{
-    if (protocol != FOLLOWER && protocol != LEADER) {
-        my_printf(red, "Wrong protocol specified when setting up the queue depths %d \n", protocol);
-        assert(false);
-    }
-}
-
-
 
 
 
