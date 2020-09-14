@@ -202,7 +202,7 @@ static inline void zk_KVS_batch_op_reads(context_t *ctx)
     if (read->opcode == KVS_OP_GET) {
       ctx_insert_mes(ctx, R_QP_ID, R_REP_SMALL_SIZE, 0,
                  !ptrs_to_r->coalesce_r_rep[op_i],
-                 (void *) kv_ptr[op_i], op_i);
+                 (void *) kv_ptr[op_i], op_i, 0);
       //ldr_insert_r_rep(ctx, zk_ctx, kv_ptr[op_i], op_i);
     }
     else {

@@ -315,7 +315,6 @@ static inline void insert_write_help(context_t *ctx, void *w_ptr,
   fill_write(write, op->key, op->opcode, op->val_len, op->value_to_write,
              ctx->m_id, op->session_id);
   zk_ctx->index_to_req_array[op->session_id] = op->index_to_req_array;
-
 }
 
 // Insert a new local or remote write to the leader pending writes

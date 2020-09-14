@@ -69,7 +69,7 @@ static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
         assert(machine_id != LEADER_MACHINE);
         assert(USE_LIN_READS);
       }
-      ctx_insert_mes(ctx, R_QP_ID, R_SIZE, (uint32_t) R_REP_BIG_SIZE, false, NULL, NOT_USED);
+      ctx_insert_mes(ctx, R_QP_ID, R_SIZE, (uint32_t) R_REP_BIG_SIZE, false, NULL, NOT_USED, 0);
     }
     else if (resp[i].type == KVS_LOCAL_GET_SUCCESS) {
         //check_state_with_allowed_flags(2, interface[t_id].req_array[ops[i].session_id][ops[i].index_to_req_array].state, IN_PROGRESS_REQ);
@@ -78,9 +78,9 @@ static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
     }
     else { // WRITE
       if (zk_ctx->protocol == FOLLOWER)
-        ctx_insert_mes(ctx, COMMIT_W_QP_ID, (uint32_t) W_SIZE, 1, false, &ops[i], NOT_USED);
+        ctx_insert_mes(ctx, COMMIT_W_QP_ID, (uint32_t) W_SIZE, 1, false, &ops[i], NOT_USED, 0);
       else
-        ctx_insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1, false, &ops[i], LOCAL_PREP);
+        ctx_insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1, false, &ops[i], LOCAL_PREP, 0);
     }
   }
 
@@ -275,7 +275,7 @@ static inline bool write_handler(context_t *ctx)
     if (DEBUG_WRITES)
       printf("Poll for writes passes session id %u \n", write->sess_id);
     ctx_insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1,
-               false, (void *) write, REMOTE_WRITE);
+               false, (void *) write, REMOTE_WRITE, 0);
     //ldr_insert_prep(ctx, zk_ctx, (void *) write, false);
     write->opcode = 3;
   }
