@@ -589,7 +589,7 @@ static inline void check_unicast_before_send(context_t *ctx,
     assert(qp_meta->send_wr[0].opcode == IBV_WR_SEND);
     assert(qp_meta->send_wr[0].num_sge == 1);
     if (!qp_meta->enable_inlining) {
-      assert(qp_meta->send_wr[0].sg_list->lkey == qp_meta->send_mr->lkey);
+      //assert(qp_meta->send_wr[0].sg_list->lkey == qp_meta->send_mr->lkey);
       //assert(qp_meta->send_wr[0].send_flags == IBV_SEND_SIGNALED);
       assert(!qp_meta->enable_inlining);
     }

@@ -276,8 +276,7 @@ static inline bool write_handler(context_t *ctx)
       printf("Poll for writes passes session id %u \n", write->sess_id);
     ctx_insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1,
                false, (void *) write, REMOTE_WRITE, 0);
-    //ldr_insert_prep(ctx, zk_ctx, (void *) write, false);
-    write->opcode = 3;
+    if (ENABLE_ASSERTIONS) write->opcode = 3;
   }
   if (ENABLE_STAT_COUNTING) {
     t_stats[ctx->t_id].received_writes += w_num;
