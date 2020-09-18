@@ -311,7 +311,7 @@ static inline bool r_rep_handler(context_t *ctx)
       my_printf(yellow, "Wrkr: %u R_rep %u/%u opcode %u, session %u\n",
                 ctx->t_id, r_rep_i, r_rep_mes->coalesce_num, r_rep->opcode, r_rob->sess_id);
 
-    assert(r_rob->state = VALID);
+    assert(r_rob->state == VALID);
     assert(r_rob->l_id == r_rep_mes->l_id + r_rep_i);
     byte_ptr += get_size_from_opcode(r_rep->opcode);
     uint8_t *value_to_read =  r_rep->opcode == G_ID_EQUAL ? r_rob->value : r_rep->value;

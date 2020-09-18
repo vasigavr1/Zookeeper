@@ -161,7 +161,6 @@ static inline void zk_KVS_batch_op_updates(uint16_t op_num, zk_ctx_t *zk_ctx,
 }
 
 
-///* The leader and follower send the writes to be committed with this function*/
 static inline void zk_KVS_batch_op_reads(context_t *ctx)
 {
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
@@ -210,7 +209,6 @@ static inline void zk_KVS_batch_op_reads(context_t *ctx)
                 read->opcode, op_i, ptrs_to_r->ptr_to_r_mes[op_i]->m_id,  read->g_id);
       assert(0);
     }
-
   }
 }
 

@@ -90,7 +90,7 @@ typedef enum {FOLLOWER = 1, LEADER} protocol_t;
 
 
 
-// READ REPLIES -- Replies to reads/acquires/proposes accepts
+// READ REPLIES
 #define R_REP_MES_HEADER (9) //l_id 8 , coalesce_num 1
 #define R_REP_BIG_SIZE (VALUE_SIZE + 8 + 1) // g_id + opcode
 #define R_REP_SMALL_SIZE 1
