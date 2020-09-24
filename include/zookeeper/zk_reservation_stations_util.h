@@ -374,6 +374,7 @@ static inline void insert_read_help(context_t *ctx, void *r_ptr,
     fifo_set_push_backward_ptr(send_fifo, zk_ctx->r_rob->push_ptr);
   }
   fifo_incr_push_ptr(zk_ctx->r_rob);
+  fifo_increm_capacity(zk_ctx->r_rob);
 }
 
 

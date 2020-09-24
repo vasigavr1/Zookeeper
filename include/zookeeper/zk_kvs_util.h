@@ -14,20 +14,17 @@
 
 
 
-static inline void zk_KVS_remote_read(zk_ctx_t *zk_ctx,
+static inline void zk_KVS_remote_read(context_t *ctx,
                                       mica_op_t *kv_ptr,
-                                      ctx_trace_op_t *op,
-                                      zk_resp_t *resp,
-                                      uint32_t *r_push_ptr_,
-                                      uint16_t t_id)
+                                      ctx_trace_op_t *op)
 {
-  uint32_t r_push_ptr = *r_push_ptr_;
-  r_rob_t *r_rob = (r_rob_t *) get_fifo_slot(zk_ctx->r_rob, r_push_ptr);
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+  r_rob_t *r_rob = (r_rob_t *) get_fifo_push_slot(zk_ctx->r_rob);
 
   uint32_t debug_cntr = 0;
   uint64_t tmp_lock = read_seqlock_lock_free(&kv_ptr->seqlock);
   do {
-    debug_stalling_on_lock(&debug_cntr, "remote read", t_id);
+    debug_stalling_on_lock(&debug_cntr, "remote read", ctx->t_id);
     memcpy(r_rob->value, kv_ptr->value, (size_t) VALUE_SIZE);
     r_rob->g_id = kv_ptr->g_id;
   } while (!(check_seqlock_lock_free(&kv_ptr->seqlock, &tmp_lock)));
@@ -39,23 +36,21 @@ static inline void zk_KVS_remote_read(zk_ctx_t *zk_ctx,
   if (ENABLE_ASSERTIONS) assert(zk_ctx->stalled[r_rob->sess_id]);
   r_rob->state = VALID;
   r_rob->l_id = zk_ctx->local_r_id + zk_ctx->r_rob->capacity ;
-  resp->type = KVS_GET_SUCCESS;
-  MOD_INCR(r_push_ptr, FLR_PENDING_READS);
-  (*r_push_ptr_) =  r_push_ptr;
-  fifo_increm_capacity(zk_ctx->r_rob);
+
+  ctx_insert_mes(ctx, R_QP_ID, R_SIZE, (uint32_t) R_REP_BIG_SIZE, false, NULL, NOT_USED, 0);
 }
 
 /* The leader and follower send their local requests to this, reads get served
  * But writes do not get served, writes are only propagated here to see whether their keys exist */
-static inline void zk_KVS_batch_op_trace(zk_ctx_t *zk_ctx, uint16_t op_num,
-                                         ctx_trace_op_t *op, zk_resp_t *resp,
-                                         uint16_t t_id)
+static inline void zk_KVS_batch_op_trace(context_t *ctx, uint16_t op_num)
 {
+
+  zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+  ctx_trace_op_t *op = zk_ctx->ops;
   uint16_t op_i;
  if (ENABLE_ASSERTIONS) {
    assert(op != NULL);
    assert(op_num > 0 && op_num <= ZK_TRACE_BATCH);
-   assert(resp != NULL);
  }
 
   unsigned int bkt[ZK_TRACE_BATCH];
@@ -71,7 +66,7 @@ static inline void zk_KVS_batch_op_trace(zk_ctx_t *zk_ctx, uint16_t op_num,
   }
   KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
 
-  uint32_t r_push_ptr = zk_ctx->protocol == FOLLOWER ? zk_ctx->r_rob->push_ptr : 0;
+  //uint32_t r_push_ptr = zk_ctx->protocol == FOLLOWER ? zk_ctx->r_rob->push_ptr : 0;
   // the following variables used to validate atomicity between a lock-free read of an object
   for(op_i = 0; op_i < op_num; op_i++) {
     if (ENABLE_ASSERTIONS && kv_ptr[op_i] == NULL) assert(false);
@@ -80,21 +75,25 @@ static inline void zk_KVS_batch_op_trace(zk_ctx_t *zk_ctx, uint16_t op_num,
       my_printf(red, "Kvs miss %u\n", op_i);
       cust_print_key("Op", &op[op_i].key);
       cust_print_key("KV_ptr", &kv_ptr[op_i]->key);
-      resp[op_i].type = KVS_MISS;
       assert(false);
     }
-    if (op[op_i].opcode == KVS_OP_GET ) {
+    if (op[op_i].opcode == KVS_OP_GET) {
       if (!USE_LIN_READS || machine_id == LEADER_MACHINE) {
-        KVS_local_read(kv_ptr[op_i], op[op_i].value_to_read, &resp[op_i].type, t_id);
+        KVS_local_read(kv_ptr[op_i], op[op_i].value_to_read, NULL, ctx->t_id);
+        signal_completion_to_client(op[op_i].session_id, op[op_i].index_to_req_array, ctx->t_id);
+
       }
       else {
-        zk_KVS_remote_read(zk_ctx, kv_ptr[op_i], &op[op_i],
-                           &resp[op_i], &r_push_ptr, t_id);
+        zk_KVS_remote_read(ctx, kv_ptr[op_i], &op[op_i]);
+
       }
 
     }
-    else if (op[op_i].opcode == KVS_OP_PUT) {
-      resp[op_i].type = KVS_PUT_SUCCESS;
+    else if (op[op_i].opcode == KVS_OP_PUT){
+      if (zk_ctx->protocol == FOLLOWER)
+        ctx_insert_mes(ctx, COMMIT_W_QP_ID, (uint32_t) W_SIZE, 1, false, &op[op_i], NOT_USED, 0);
+      else
+        ctx_insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1, false, &op[op_i], LOCAL_PREP, 0);
     }
     else if (ENABLE_ASSERTIONS) {
       my_printf(red, "wrong Opcode in cache: %d, req %d \n", op[op_i].opcode, op_i);
@@ -202,7 +201,6 @@ static inline void zk_KVS_batch_op_reads(context_t *ctx)
       ctx_insert_mes(ctx, R_QP_ID, R_REP_SMALL_SIZE, 0,
                  !ptrs_to_r->coalesce_r_rep[op_i],
                  (void *) kv_ptr[op_i], op_i, 0);
-      //ldr_insert_r_rep(ctx, zk_ctx, kv_ptr[op_i], op_i);
     }
     else {
       my_printf(red, "wrong Opcode to a read in kvs: %d, req %d, flr_id %u,  g_id %lu , \n",

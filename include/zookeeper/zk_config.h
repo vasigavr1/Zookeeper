@@ -23,7 +23,7 @@
 #define ENABLE_GIDS 1 // should ldr tag writes with unique ids // this is useful for remote reads
 #define ENABLE_GID_ORDERING (ENABLE_GIDS ? 1 : 0) // should global write ordering occur
 #define DISABLE_UPDATING_KVS 0
-#define USE_LIN_READS (ENABLE_GIDS ? 1 : 0)
+#define USE_LIN_READS (ENABLE_GIDS ? 0 : 0)
 
 #define FOLLOWERS_PER_MACHINE (WORKERS_PER_MACHINE)
 #define LEADERS_PER_MACHINE (WORKERS_PER_MACHINE)

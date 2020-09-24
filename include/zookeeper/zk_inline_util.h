@@ -12,80 +12,58 @@
 
 
 // Both Leader and Followers use this to read the trace, propagate reqs to the cache and maintain their prepare/write fifos
-static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
+static inline uint16_t zk_find_trace_ops(context_t *ctx)
 {
   zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
   ctx_trace_op_t *ops = zk_ctx->ops;
   zk_resp_t *resp = zk_ctx->resp;
   trace_t *trace = zk_ctx->trace;
 
-  if (zk_ctx->protocol == FOLLOWER && MAKE_FOLLOWERS_PASSIVE) return ;
-  uint16_t op_i = 0;
+  if (zk_ctx->protocol == FOLLOWER && MAKE_FOLLOWERS_PASSIVE) return 0;
+  uint16_t kvs_op_i = 0;
   int working_session = -1;
   if (all_sessions_are_stalled(ctx, zk_ctx->all_sessions_stalled,
                                &zk_ctx->stalled_sessions_dbg_counter))
-    return;
+    return 0;
   if (!find_starting_session(ctx, zk_ctx->last_session,
-                             zk_ctx->stalled, &working_session)) return;
+                             zk_ctx->stalled, &working_session)) return 0;
 
   bool passed_over_all_sessions = false;
 
   /// main loop
-  while (op_i < ZK_TRACE_BATCH && !passed_over_all_sessions) {
+  while (kvs_op_i < ZK_TRACE_BATCH && !passed_over_all_sessions) {
 
-    ctx_fill_trace_op(ctx, &trace[zk_ctx->trace_iter], &ops[op_i], working_session);
+    ctx_fill_trace_op(ctx, &trace[zk_ctx->trace_iter], &ops[kvs_op_i], working_session);
     zk_ctx->stalled[working_session] =
-      ops[op_i].opcode == KVS_OP_PUT || (USE_LIN_READS && zk_ctx->protocol == FOLLOWER);
+      ops[kvs_op_i].opcode == KVS_OP_PUT || (USE_LIN_READS && zk_ctx->protocol == FOLLOWER);
 
     passed_over_all_sessions =
       ctx_find_next_working_session(ctx, &working_session,
                                     zk_ctx->stalled,
                                     zk_ctx->last_session,
                                     &zk_ctx->all_sessions_stalled);
-    resp[op_i].type = EMPTY;
+    resp[kvs_op_i].type = EMPTY;
     if (!ENABLE_CLIENTS) {
       zk_ctx->trace_iter++;
       if (trace[zk_ctx->trace_iter].opcode == NOP) zk_ctx->trace_iter = 0;
     }
-    op_i++;
+    kvs_op_i++;
+
   }
   //printf("Session %u pulled: ops %u, req_array ptr %u \n",
-  //       working_session, op_i, ops[0].index_to_req_array);
+  //       working_session, kvs_op_i, ops[0].index_to_req_array);
   zk_ctx->last_session = (uint16_t) working_session;
-  t_stats[ctx->t_id].cache_hits_per_thread += op_i;
-  zk_KVS_batch_op_trace(zk_ctx, op_i, ops, resp, ctx->t_id);
-
-  for (uint16_t i = 0; i < op_i; i++) {
-    // my_printf(green, "After: OP_i %u -> session %u \n", i, *(uint32_t *) &ops[i]);
-    if (resp[i].type == KVS_MISS)  {
-      my_printf(green, "KVS %u: bkt %u, server %u, tag %u \n", i,
-                ops[i].key.bkt, ops[i].key.server, ops[i].key.tag);
-      assert(false);
-      continue;
-    }
-    // Local reads
-    else if (resp[i].type == KVS_GET_SUCCESS) {
-      if (ENABLE_ASSERTIONS) {
-        assert(machine_id != LEADER_MACHINE);
-        assert(USE_LIN_READS);
-      }
-      ctx_insert_mes(ctx, R_QP_ID, R_SIZE, (uint32_t) R_REP_BIG_SIZE, false, NULL, NOT_USED, 0);
-    }
-    else if (resp[i].type == KVS_LOCAL_GET_SUCCESS) {
-        //check_state_with_allowed_flags(2, interface[t_id].req_array[ops[i].session_id][ops[i].index_to_req_array].state, IN_PROGRESS_REQ);
-        //assert(interface[t_id].req_array[ops[i].session_id][ops[i].index_to_req_array].state == IN_PROGRESS_REQ);
-        signal_completion_to_client(ops[i].session_id, ops[i].index_to_req_array, ctx->t_id);
-    }
-    else { // WRITE
-      if (zk_ctx->protocol == FOLLOWER)
-        ctx_insert_mes(ctx, COMMIT_W_QP_ID, (uint32_t) W_SIZE, 1, false, &ops[i], NOT_USED, 0);
-      else
-        ctx_insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1, false, &ops[i], LOCAL_PREP, 0);
-    }
-  }
-
+  t_stats[ctx->t_id].cache_hits_per_thread += kvs_op_i;
+  return kvs_op_i;
 }
 
+
+static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
+{
+  uint16_t kvs_op_i = zk_find_trace_ops(ctx);
+  if (kvs_op_i > 0 )
+    zk_KVS_batch_op_trace(ctx, kvs_op_i);
+}
 
 /* ---------------------------------------------------------------------------
 //------------------------------UNICASTS -----------------------------
