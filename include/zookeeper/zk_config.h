@@ -12,9 +12,9 @@
 #define R_CREDITS 5
 #define R_COALESCE 20
 //#define MAX_READ_SIZE 300 //300 in terms of bytes for Reads
-#define W_CREDITS 3
+#define W_CREDITS 2
 #define MAX_W_COALESCE 16
-#define PREPARE_CREDITS 15
+#define PREPARE_CREDITS 10
 #define MAX_PREP_COALESCE 16
 #define COMMIT_CREDITS 400
 #define FEED_FROM_TRACE 0
