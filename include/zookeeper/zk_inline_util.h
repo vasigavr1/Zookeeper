@@ -95,7 +95,6 @@ static inline void send_reads_helper(context_t *ctx)
   r_mes->coalesce_num = (uint8_t) coalesce_num;
   checks_and_stats_when_sending_unicasts(ctx, R_QP_ID, coalesce_num);
   zk_checks_and_print_when_forging_unicast(ctx, R_QP_ID);
-
 }
 
 
@@ -229,7 +228,6 @@ static inline bool ack_handler(context_t *ctx)
 
   return true;
 }
-
 
 static inline bool write_handler(context_t *ctx)
 {
