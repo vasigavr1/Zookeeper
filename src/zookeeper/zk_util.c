@@ -61,7 +61,7 @@ void zk_static_assert_compile_parameters()
   assert(sizeof(zk_w_mes_ud_t) == LDR_W_RECV_SIZE);
   assert(SESSIONS_PER_THREAD < M_16);
   assert(FLR_MAX_RECV_COM_WRS >= FLR_CREDITS_IN_MESSAGE);
-  if (WRITE_RATIO > 0) assert(ZK_UPDATE_BATCH >= LEADER_PENDING_WRITES);
+  if (write_ratio > 0) assert(ZK_UPDATE_BATCH >= LEADER_PENDING_WRITES);
 
   if (PUT_A_MACHINE_TO_SLEEP) assert(MACHINE_THAT_SLEEPS != LEADER_MACHINE);
 
@@ -96,7 +96,7 @@ void dump_stats_2_file(struct stats* st){
             SESSIONS_PER_THREAD,
             USE_BIG_OBJECTS == 1 ? ((EXTRA_CACHE_LINES * 64) + BASE_VALUE_SIZE): BASE_VALUE_SIZE,
             MACHINE_NUM, LEADERS_PER_MACHINE,
-            FOLLOWERS_PER_MACHINE, WRITE_RATIO,
+            FOLLOWERS_PER_MACHINE, write_ratio,
             machine_id);
     printf("%s\n", filename);
     fp = fopen(filename, "w"); // "w" means that we are going to write on this file

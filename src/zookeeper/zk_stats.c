@@ -1,6 +1,36 @@
 #include "zk_util.h"
 
 
+static void xput_file_name(char *filename)
+{
+    char* path = "/users/akats/odyssey/build/results/xput/per-node";
+
+    sprintf(filename, "%s/%s_xPut_m_%d_wr_%.1f_rmw_%.1f_wk_%d_b_%d_c_%d%s-%d.txt",
+            path, "ZAB",
+            MACHINE_NUM, write_ratio/10.0, RMW_RATIO/10.0, WORKERS_PER_MACHINE,
+            ZK_TRACE_BATCH, 0, "_uni", machine_id);
+}
+
+//assuming microsecond latency
+static void dump_xput_stats(double xput_in_miops)
+{
+    static uint8_t no_func_calls = 0; ///WARNING this is not thread safe.
+
+    assert(no_func_calls < 250);
+
+    FILE *xput_stats_fd;
+    char filename[128];
+    xput_file_name(filename);
+
+    const char* open_mode = no_func_calls == 0 ? "w" : "a";
+    xput_stats_fd = fopen(filename, open_mode);
+    assert(xput_stats_fd != NULL);
+
+    fprintf(xput_stats_fd, "node%d_miops-%d: %.2f\n", machine_id, no_func_calls, xput_in_miops);
+
+    fclose(xput_stats_fd);
+    no_func_calls++;
+}
 
 void zk_stats(stats_ctx_t *ctx)
 {
@@ -82,6 +112,15 @@ void zk_stats(stats_ctx_t *ctx)
     printf("---------------------------------------\n");
   }
   my_printf(green, "%u. SYSTEM MIOPS: %.2f \n", print_count, total_throughput);
+
+  if(DUMP_STATS_2_FILE){
+      dump_xput_stats(total_throughput);
+      if(EXIT_ON_PRINT && print_count == PRINT_NUM - 1){
+          char filename[128];
+          xput_file_name(filename);
+          printf("xPut stats (of this node) saved at: \n\t%s\n", filename);
+      }
+  }
 }
 
 
