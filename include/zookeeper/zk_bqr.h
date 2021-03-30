@@ -1,14 +1,23 @@
-#ifndef HERMES_HERMES_ASYNC_H
-#define HERMES_HERMES_ASYNC_H
+#ifndef ZK_BQR_H
+#define ZK_BQR_H
 
-#include "config.h"
-#include "spacetime.h"
+#include "zk_main.h"
 
 #define MAX_READ_BUFFER_SIZE 512
 
-#define ENABLE_RD_BUF_COALESCING
+// TODO 1 change hermes related ops with ZAB leader ops (for lazy batched quorum reads).
+// TODO 2 implement eager batched quorum reads for follower reads
+// TODO 3 measure latency
+// TODO 4 optimize
+
+//#define ENABLE_READ_BUFFER
+//#define ENABLE_RD_BUF_COALESCING
 
 #define EMPTY_ASYNC_TS 0
+
+// Based on top.h
+#define MAX_MACHINE_NUM MACHINE_NUM
+#define MAX_BATCH_KVS_OPS_SIZE ZK_TRACE_BATCH
 
 static_assert(MAX_MACHINE_NUM > 2, "");
 
@@ -37,8 +46,8 @@ static void read_buf_init(read_buf_t* rb){
 
 typedef struct {
     uint16_t worker_lid;
-    struct timespec* stopwatch_for_req_latency;
-    volatile long long* worker_completed_ops;
+    zk_ctx_t *zk_ctx;
+    thread_stats_t *t_stats;
     async_ts curr_ts;
     async_ts majority_ts;
     uint8_t  has_given_ts;
@@ -51,12 +60,14 @@ typedef struct {
 static inline void complete_reads_from_read_buf(async_ctx *a_ctx);
 
 static void async_init(async_ctx* a_ctx,
-                       volatile long long* worker_completed_ops,
                        uint16_t worker_lid,
-                       struct timespec* stopwatch_for_req_latency)
+                       thread_stats_t *t_stats,
+                       zk_ctx_t *zk_ctx)
 {
+    a_ctx->zk_ctx = zk_ctx;
+    a_ctx->t_stats = t_stats;
     a_ctx->worker_lid = worker_lid;
-    a_ctx->stopwatch_for_req_latency = stopwatch_for_req_latency;
+
     a_ctx->worker_completed_ops = worker_completed_ops;
     a_ctx->curr_ts     = EMPTY_ASYNC_TS;
     a_ctx->majority_ts = EMPTY_ASYNC_TS;
@@ -226,4 +237,4 @@ static inline void try_add_op_to_read_buf(async_ctx *a_ctx,
     src->op_meta.state = ST_MISS; // Making it a MISS will be resetted afterwards
 }
 
-#endif //HERMES_HERMES_ASYNC_H
+#endif //ZK_BQR_H
