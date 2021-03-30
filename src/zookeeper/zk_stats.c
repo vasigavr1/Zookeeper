@@ -3,7 +3,7 @@
 
 static void xput_file_name(char *filename)
 {
-    char* path = "/users/akats/odyssey/build/results/xput/per-node";
+    char* path = "../build/results/xput/per-node";
 
     sprintf(filename, "%s/%s_xPut_m_%d_wr_%.1f_rmw_%.1f_wk_%d_b_%d_c_%d%s-%d.txt",
             path, "ZAB",
