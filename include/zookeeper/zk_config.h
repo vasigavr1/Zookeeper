@@ -19,6 +19,10 @@
 #define COMMIT_CREDITS 400
 #define FEED_FROM_TRACE 0
 
+// TODO BQR
+//#define ZK_ENABLE_BQR // comment out to disable
+//#define MAKE_FOLLOWERS_PASSIVE 1
+
 #define MAKE_FOLLOWERS_PASSIVE 0
 #define ENABLE_GIDS 1 // should ldr tag writes with unique ids // this is useful for remote reads
 #define ENABLE_GID_ORDERING (ENABLE_GIDS ? 1 : 0) // should global write ordering occur

@@ -5,34 +5,73 @@
 
 #define MAX_READ_BUFFER_SIZE 512
 
-// TODO 1 change hermes related ops with ZAB leader ops (for lazy batched quorum reads).
-// TODO 2 implement eager batched quorum reads for follower reads
-// TODO 3 measure latency
-// TODO 4 optimize
+// TODO 1 Implement eager for all ZAB nodes (even leader)
+//     --> stall reads until a later write is completed
+//     --> once done unstall and push to the KVS
+//     --> buffer reads somewhere outside the KVS batch op buffs
+// TODO 2 measure latency
+// TODO 3 optimize
+// TODO 4 merge with hermes (lazy) and make it generic
 
 //#define ENABLE_READ_BUFFER
 //#define ENABLE_RD_BUF_COALESCING
 
 #define EMPTY_ASYNC_TS 0
 
-// Based on top.h
+//#define BQR_ENABLE_HERMES
+#ifdef BQR_ENABLE_HERMES
+#define MAX_MACHINE_NUM  ???
+#define MAX_BATCH_KVS_OPS_SIZE ???
+
+typedef spacetime_op_t bqr_op_t;
+#define BQR_MACHINE_NUM machine_num
+#define BQR_BATCH_SIZE  max_batch_size
+
+#define BQR_OP_STATE op_meta.state
+#define BQR_OP_OPCODE op_meta.op_code
+#define BQR_OP_READ_OPCODE ST_OP_GET
+#define BQR_OP_RESET_OPCODE ST_MISS
+#define BQR_OP_UNSENT_UPD_TYPE1 ST_PUT_SUCCESS
+#define BQR_OP_UNSENT_UPD_TYPE2 ST_RMW_SUCCESS
+#define BQR_OP_COMPLETE_READ_OPCODE ST_GET_COMPLETE
+#define BQR_OP_ASYNC_COMPLETE_READ_OPCODE ST_GET_ASYNC_COMPLETE
+
+#else
+typedef ctx_trace_op_t bqr_op_t;
 #define MAX_MACHINE_NUM MACHINE_NUM
 #define MAX_BATCH_KVS_OPS_SIZE ZK_TRACE_BATCH
 
+#define BQR_MACHINE_NUM MACHINE_NUM
+#define BQR_BATCH_SIZE  ZK_TRACE_BATCH
+
+#define BQR_OP_STATE opcode???
+#define BQR_OP_OPCODE opcode
+#define BQR_OP_READ_OPCODE KVS_OP_GET
+#define BQR_OP_RESET_OPCODE  ???
+#define BQR_OP_UNSENT_UPD_TYPE1 ???
+#define BQR_OP_UNSENT_UPD_TYPE2  ???
+#define BQR_OP_COMPLETE_READ_OPCODE ???
+#define BQR_OP_ASYNC_COMPLETE_READ_OPCODE ???
+
+//zk_resp.type --> I think not used
+#endif
+
 static_assert(MAX_MACHINE_NUM > 2, "");
+
+
 
 typedef uint64_t async_ts;
 
 typedef struct {
     async_ts ts;
     uint16_t cnt;
-    spacetime_op_t* ptr;
+    bqr_op_t* ptr;
 } read_buf_slot_ptr;
 
 typedef struct {
     uint16_t curr_len;
     read_buf_slot_ptr     ptrs[MAX_READ_BUFFER_SIZE];
-    spacetime_op_t read_memory[MAX_READ_BUFFER_SIZE];
+    bqr_op_t       read_memory[MAX_READ_BUFFER_SIZE];
 } read_buf_t;
 
 static void read_buf_init(read_buf_t* rb){
@@ -45,6 +84,7 @@ static void read_buf_init(read_buf_t* rb){
 }
 
 typedef struct {
+    uint8_t is_lazy; // if not it is eager
     uint16_t worker_lid;
     zk_ctx_t *zk_ctx;
     thread_stats_t *t_stats;
@@ -59,16 +99,49 @@ typedef struct {
 
 static inline void complete_reads_from_read_buf(async_ctx *a_ctx);
 
+/*
+ *   Helpers
+ */
+static inline uint8_t* bqr_op_resp_ptr(bqr_op_t* op){
+#ifdef BQR_ENABLE_HERMES
+    return &op->op_meta.state;
+#else
+    return &op->opcode;
+#endif
+}
+
+static inline uint8_t bqr_op_resp(bqr_op_t* op){
+#ifdef BQR_ENABLE_HERMES
+    return op->op_meta.state;
+#else
+    return op->opcode;
+#endif
+}
+
+static inline uint8_t bqr_op_opcode(bqr_op_t* op){
+#ifdef BQR_ENABLE_HERMES
+    return op->op_meta.op_code;
+#else
+    return op->opcode;
+#endif
+}
+
+
+/*
+ *  BQR
+ */
 static void async_init(async_ctx* a_ctx,
+                       uint8_t is_lazy,
                        uint16_t worker_lid,
                        thread_stats_t *t_stats,
                        zk_ctx_t *zk_ctx)
 {
     a_ctx->zk_ctx = zk_ctx;
+    a_ctx->is_lazy = is_lazy;
     a_ctx->t_stats = t_stats;
     a_ctx->worker_lid = worker_lid;
 
-    a_ctx->worker_completed_ops = worker_completed_ops;
+//    a_ctx->worker_completed_ops = worker_completed_ops;
     a_ctx->curr_ts     = EMPTY_ASYNC_TS;
     a_ctx->majority_ts = EMPTY_ASYNC_TS;
     a_ctx->has_issued_upd = 0;
@@ -107,17 +180,18 @@ static inline void async_set_op_ts(async_ctx* a_ctx, uint16_t op_idx, uint8_t is
     a_ctx->has_issued_upd |= is_upd;
 }
 
-static inline void async_set_ops_ts(async_ctx* a_ctx, spacetime_op_t *ops){
+static inline void async_set_ops_ts(async_ctx* a_ctx, bqr_op_t *ops){
     async_start_cycle(a_ctx);
 
+    uint8_t resp = bqr_op_resp(&ops[i]);
     // completed read or pending update
-    for(int i = 0; i < max_batch_size; i++) {
+    for(int i = 0; i < BQR_BATCH_SIZE; i++) {
         uint8_t just_completed_read =
-                ops[i].op_meta.state == ST_GET_COMPLETE &&
-                a_ctx->op_async_ts[i] == EMPTY_ASYNC_TS;
+        resp == BQR_OP_COMPLETE_READ_OPCODE &&
+        a_ctx->op_async_ts[i] == EMPTY_ASYNC_TS;
         uint8_t unsent_upd =
-                ops[i].op_meta.state == ST_PUT_SUCCESS ||
-                ops[i].op_meta.state == ST_RMW_SUCCESS;
+        resp == BQR_OP_UNSENT_UPD_TYPE1 ||
+        resp == BQR_OP_UNSENT_UPD_TYPE2;
 
         if(just_completed_read || unsent_upd){
             async_set_op_ts(a_ctx, i, unsent_upd);
@@ -127,23 +201,25 @@ static inline void async_set_ops_ts(async_ctx* a_ctx, spacetime_op_t *ops){
     async_end_cycle(a_ctx);
 }
 
-static inline void async_complete_read(async_ctx* a_ctx, spacetime_op_t *op, uint16_t op_id)
+static inline void async_complete_read(async_ctx* a_ctx, bqr_op_t *op, uint16_t op_id)
 {
-    if(op->op_meta.state == ST_GET_COMPLETE &&
-       a_ctx->op_async_ts[op_id] <= a_ctx->majority_ts)
+    uint8_t resp = bqr_op_resp(op);
+    if(resp == BQR_OP_COMPLETE_READ_OPCODE &&
+    a_ctx->op_async_ts[op_id] <= a_ctx->majority_ts)
     {
-        op->op_meta.state = ST_GET_ASYNC_COMPLETE;
+        uint8_t* resp_ptr = bqr_op_resp_ptr(op);
+        *resp_ptr = BQR_OP_ASYNC_COMPLETE_READ_OPCODE;
     }
 }
 
-static inline void async_complete_reads(async_ctx* a_ctx, spacetime_op_t *ops)
+static inline void async_complete_reads(async_ctx* a_ctx, bqr_op_t *ops)
 {
-    for(int i = 0; i < max_batch_size; i++) {
+    for(int i = 0; i < BQR_BATCH_SIZE; i++) {
         async_complete_read(a_ctx, &ops[i], i);
     }
 }
 
-static inline void async_set_ack_ts(async_ctx* a_ctx, spacetime_op_t *ops,
+static inline void async_set_ack_ts(async_ctx* a_ctx, bqr_op_t *ops,
                                     int op_idx, uint8_t node_id,
                                     const uint8_t set_read_completion)
 {
@@ -156,8 +232,8 @@ static inline void async_set_ack_ts(async_ctx* a_ctx, spacetime_op_t *ops,
     if(a_ctx->majority_ts >= ts) return;
 
     // calculate majority ts
-    uint8_t majority = machine_num / 2; // + 1 (the local replica)
-    for(int i = 0; i < machine_num; ++i){
+    uint8_t majority = BQR_MACHINE_NUM / 2; // + 1 (the local replica)
+    for(int i = 0; i < BQR_MACHINE_NUM; ++i){
         if(a_ctx->ts_array[i] >= ts){
             majority--;
             if(majority == 0){
@@ -201,17 +277,18 @@ static inline void complete_reads_from_read_buf(async_ctx *a_ctx)
         }
     }
 
-    *a_ctx->worker_completed_ops =
-            *a_ctx->worker_completed_ops + total_completed;
+//    *a_ctx->worker_completed_ops =
+//            *a_ctx->worker_completed_ops + total_completed;
 }
 
 static inline void try_add_op_to_read_buf(async_ctx *a_ctx,
-                                          spacetime_op_t* src,
+                                          bqr_op_t* src,
                                           uint16_t src_op_idx)
 {
+    uint8_t resp = bqr_op_resp(src);
     // return if not appropriate state(op) or if buf is full
-    if(src->op_meta.state != ST_GET_COMPLETE) return;
-    assert(src->op_meta.opcode == ST_OP_GET);
+    if(resp != BQR_OP_COMPLETE_READ_OPCODE) return;
+    assert(src->BQR_OP_OPCODE  == BQR_OP_READ_OPCODE);
 
     uint16_t curr_len = a_ctx->rb.curr_len;
     async_ts op_ts = a_ctx->op_async_ts[src_op_idx];
@@ -234,7 +311,8 @@ static inline void try_add_op_to_read_buf(async_ctx *a_ctx,
     rb_slot->ts = op_ts;
     a_ctx->rb.curr_len++;
 
-    src->op_meta.state = ST_MISS; // Making it a MISS will be resetted afterwards
+    uint8_t* resp_ptr = bqr_op_resp_ptr(src);
+    *resp_ptr = BQR_OP_RESET_OPCODE; // Making it a MISS will be resetted afterwards
 }
 
 #endif //ZK_BQR_H

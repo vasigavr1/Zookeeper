@@ -6,10 +6,8 @@
 #define Z_KVS_UTIL_H
 
 #include "kvs.h"
-#include "zk_main.h"
 #include "generic_inline_util.h"
 #include "debug_util.h"
-#include "zk_generic_util.h"
 #include "zk_reservation_stations_util.h"
 
 

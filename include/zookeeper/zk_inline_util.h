@@ -3,8 +3,6 @@
 
 
 #include "zk_kvs_util.h"
-#include "zk_debug_util.h"
-#include "zk_reservation_stations_util.h"
 
 /* ---------------------------------------------------------------------------
 //------------------------------TRACE --------------------------------
@@ -32,6 +30,17 @@ static inline uint16_t zk_find_trace_ops(context_t *ctx)
 
   /// main loop
   while (kvs_op_i < ZK_TRACE_BATCH && !passed_over_all_sessions) {
+
+#ifdef ZK_ENABLE_BQR
+      if(trace[zk_ctx->trace_iter].opcode == KVS_OP_GET){
+          bool is_full = false;
+          if(is_full) break;
+//        ctx_trace_op_t *op_to_fill = bqr_ptr; // TODO push them to bqr_read_buf with the proper write ts
+//        ctx_fill_trace_op(ctx, &trace[zk_ctx->trace_iter], op_to_fill, working_session);
+//        continue;
+         // TODO 2: create a specialized KVS_batch_op_for_bqr_read_buf
+      }
+#endif
 
     ctx_fill_trace_op(ctx, &trace[zk_ctx->trace_iter], &ops[kvs_op_i], working_session);
     zk_ctx->stalled[working_session] =
