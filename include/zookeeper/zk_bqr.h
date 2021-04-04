@@ -3,7 +3,6 @@
 
 #include "zk_main.h"
 
-#define MAX_READ_BUFFER_SIZE 512
 
 // TODO 1 Implement eager for all ZAB nodes (even leader)
 //     --> stall reads until a later write is completed
@@ -13,306 +12,145 @@
 // TODO 3 optimize
 // TODO 4 merge with hermes (lazy) and make it generic
 
-//#define ENABLE_READ_BUFFER
-//#define ENABLE_RD_BUF_COALESCING
-
 #define EMPTY_ASYNC_TS 0
+#define MAX_READ_BUFFER_SIZE 512
+#define BQR_LAST_READ_BUFFER_SLOT (MAX_READ_BUFFER_SIZE - 1)
 
-//#define BQR_ENABLE_HERMES
-#ifdef BQR_ENABLE_HERMES
-#define MAX_MACHINE_NUM  ???
-#define MAX_BATCH_KVS_OPS_SIZE ???
-
-typedef spacetime_op_t bqr_op_t;
-#define BQR_MACHINE_NUM machine_num
-#define BQR_BATCH_SIZE  max_batch_size
-
-#define BQR_OP_STATE op_meta.state
-#define BQR_OP_OPCODE op_meta.op_code
-#define BQR_OP_READ_OPCODE ST_OP_GET
-#define BQR_OP_RESET_OPCODE ST_MISS
-#define BQR_OP_UNSENT_UPD_TYPE1 ST_PUT_SUCCESS
-#define BQR_OP_UNSENT_UPD_TYPE2 ST_RMW_SUCCESS
-#define BQR_OP_COMPLETE_READ_OPCODE ST_GET_COMPLETE
-#define BQR_OP_ASYNC_COMPLETE_READ_OPCODE ST_GET_ASYNC_COMPLETE
-
+#define BQR_ENABLE_ASSERTS
+#ifdef BQR_ENABLE_ASSERTS
+# define bqr_assert(x) (assert(x))
 #else
-typedef ctx_trace_op_t bqr_op_t;
-#define MAX_MACHINE_NUM MACHINE_NUM
-#define MAX_BATCH_KVS_OPS_SIZE ZK_TRACE_BATCH
-
-#define BQR_MACHINE_NUM MACHINE_NUM
-#define BQR_BATCH_SIZE  ZK_TRACE_BATCH
-
-#define BQR_OP_STATE opcode???
-#define BQR_OP_OPCODE opcode
-#define BQR_OP_READ_OPCODE KVS_OP_GET
-#define BQR_OP_RESET_OPCODE  ???
-#define BQR_OP_UNSENT_UPD_TYPE1 ???
-#define BQR_OP_UNSENT_UPD_TYPE2  ???
-#define BQR_OP_COMPLETE_READ_OPCODE ???
-#define BQR_OP_ASYNC_COMPLETE_READ_OPCODE ???
-
-//zk_resp.type --> I think not used
+# define bqr_assert(x) ()
 #endif
 
-static_assert(MAX_MACHINE_NUM > 2, "");
+typedef uint64_t bqr_ts_t;
+typedef ctx_trace_op_t bqr_op_t;
 
-
-
-typedef uint64_t async_ts;
-
+// FIFO Ring buffer for reads
 typedef struct {
-    async_ts ts;
-    uint16_t cnt;
-    bqr_op_t* ptr;
-} read_buf_slot_ptr;
-
-typedef struct {
-    uint16_t curr_len;
-    read_buf_slot_ptr     ptrs[MAX_READ_BUFFER_SIZE];
-    bqr_op_t       read_memory[MAX_READ_BUFFER_SIZE];
+    uint16_t head;
+    uint16_t size;
+    bqr_ts_t next_r_ts;
+    bqr_ts_t last_issued_ts;
+    bqr_ts_t last_completed_ts;
+    bqr_ts_t          ts[MAX_READ_BUFFER_SIZE];
+    bqr_op_t read_memory[MAX_READ_BUFFER_SIZE];
 } read_buf_t;
-
-static void read_buf_init(read_buf_t* rb){
-    rb->curr_len = 0;
-    for(int i = 0; i < MAX_READ_BUFFER_SIZE; i++){
-        rb->ptrs[i].ts = 0;
-        rb->ptrs[i].cnt = 0;
-        rb->ptrs[i].ptr = &rb->read_memory[i];
-    }
-}
 
 typedef struct {
     uint8_t is_lazy; // if not it is eager
-    uint16_t worker_lid;
-    zk_ctx_t *zk_ctx;
-    thread_stats_t *t_stats;
-    async_ts curr_ts;
-    async_ts majority_ts;
-    uint8_t  has_given_ts;
-    uint8_t  has_issued_upd;
-    async_ts ts_array[MAX_MACHINE_NUM];
-    async_ts op_async_ts[MAX_BATCH_KVS_OPS_SIZE];
     read_buf_t rb;
-} async_ctx;
+} bqr_ctx;
 
-static inline void complete_reads_from_read_buf(async_ctx *a_ctx);
-
-/*
- *   Helpers
- */
-static inline uint8_t* bqr_op_resp_ptr(bqr_op_t* op){
-#ifdef BQR_ENABLE_HERMES
-    return &op->op_meta.state;
-#else
-    return &op->opcode;
-#endif
-}
-
-static inline uint8_t bqr_op_resp(bqr_op_t* op){
-#ifdef BQR_ENABLE_HERMES
-    return op->op_meta.state;
-#else
-    return op->opcode;
-#endif
-}
-
-static inline uint8_t bqr_op_opcode(bqr_op_t* op){
-#ifdef BQR_ENABLE_HERMES
-    return op->op_meta.op_code;
-#else
-    return op->opcode;
-#endif
-}
-
-
-/*
- *  BQR
- */
-static void async_init(async_ctx* a_ctx,
-                       uint8_t is_lazy,
-                       uint16_t worker_lid,
-                       thread_stats_t *t_stats,
-                       zk_ctx_t *zk_ctx)
-{
-    a_ctx->zk_ctx = zk_ctx;
-    a_ctx->is_lazy = is_lazy;
-    a_ctx->t_stats = t_stats;
-    a_ctx->worker_lid = worker_lid;
-
-//    a_ctx->worker_completed_ops = worker_completed_ops;
-    a_ctx->curr_ts     = EMPTY_ASYNC_TS;
-    a_ctx->majority_ts = EMPTY_ASYNC_TS;
-    a_ctx->has_issued_upd = 0;
-    for(int i = 0; i < MAX_MACHINE_NUM; ++i){
-        a_ctx->ts_array[i]    = EMPTY_ASYNC_TS;
-    }
-    for(int i = 0; i < MAX_BATCH_KVS_OPS_SIZE; ++i){
-        a_ctx->op_async_ts[i] = EMPTY_ASYNC_TS;
-    }
-
-    read_buf_init(&a_ctx->rb);
-}
-
-static inline void async_start_cycle(async_ctx* a_ctx)
-{
-    a_ctx->curr_ts++;
-    a_ctx->has_given_ts = 0;
-    a_ctx->has_issued_upd = 0;
-}
-
-static inline void async_end_cycle(async_ctx* a_ctx)
-{
-    // WARNING we need to ensure there is at least one write per cycle that contains a read
-//    assert(!a_ctx->has_given_ts || a_ctx->has_issued_upd);
-}
-
-static inline void async_reset_op_ts(async_ctx* a_ctx, uint16_t op_idx)
-{
-    a_ctx->op_async_ts[op_idx] = EMPTY_ASYNC_TS;
-}
-
-static inline void async_set_op_ts(async_ctx* a_ctx, uint16_t op_idx, uint8_t is_upd)
-{
-    a_ctx->op_async_ts[op_idx] = a_ctx->curr_ts;
-    a_ctx->has_given_ts = 1;
-    a_ctx->has_issued_upd |= is_upd;
-}
-
-static inline void async_set_ops_ts(async_ctx* a_ctx, bqr_op_t *ops){
-    async_start_cycle(a_ctx);
-
-    uint8_t resp = bqr_op_resp(&ops[i]);
-    // completed read or pending update
-    for(int i = 0; i < BQR_BATCH_SIZE; i++) {
-        uint8_t just_completed_read =
-        resp == BQR_OP_COMPLETE_READ_OPCODE &&
-        a_ctx->op_async_ts[i] == EMPTY_ASYNC_TS;
-        uint8_t unsent_upd =
-        resp == BQR_OP_UNSENT_UPD_TYPE1 ||
-        resp == BQR_OP_UNSENT_UPD_TYPE2;
-
-        if(just_completed_read || unsent_upd){
-            async_set_op_ts(a_ctx, i, unsent_upd);
-        }
-    }
-
-    async_end_cycle(a_ctx);
-}
-
-static inline void async_complete_read(async_ctx* a_ctx, bqr_op_t *op, uint16_t op_id)
-{
-    uint8_t resp = bqr_op_resp(op);
-    if(resp == BQR_OP_COMPLETE_READ_OPCODE &&
-    a_ctx->op_async_ts[op_id] <= a_ctx->majority_ts)
-    {
-        uint8_t* resp_ptr = bqr_op_resp_ptr(op);
-        *resp_ptr = BQR_OP_ASYNC_COMPLETE_READ_OPCODE;
+static inline void bqr_r_buf_init(read_buf_t* rb){
+    rb->size = 0;
+    rb->head = 0;
+    rb->next_r_ts = 0;
+    rb->last_issued_ts = 0;
+    rb->last_completed_ts = 0;
+    for(int i = 0; i < MAX_READ_BUFFER_SIZE; i++) {
+        rb->ts = EMPTY_ASYNC_TS;
     }
 }
 
-static inline void async_complete_reads(async_ctx* a_ctx, bqr_op_t *ops)
-{
-    for(int i = 0; i < BQR_BATCH_SIZE; i++) {
-        async_complete_read(a_ctx, &ops[i], i);
-    }
+static inline bool bqr_rb_is_empty(bqr_ctx* b_ctx){
+    return b_ctx->rb.size == 0;
+}
+static inline bool bqr_rb_is_full(bqr_ctx* b_ctx){
+    return b_ctx->rb.size == MAX_READ_BUFFER_SIZE;
+}
+static inline bool bqr_rb_needs_higher_ts(){
+    return rb->next_r_ts > rb->last_completed_ts;
 }
 
-static inline void async_set_ack_ts(async_ctx* a_ctx, bqr_op_t *ops,
-                                    int op_idx, uint8_t node_id,
-                                    const uint8_t set_read_completion)
-{
-    async_ts ts = a_ctx->op_async_ts[op_idx];
-
-    if(a_ctx->ts_array[node_id] < ts){
-        a_ctx->ts_array[node_id] = ts;
-    }
-
-    if(a_ctx->majority_ts >= ts) return;
-
-    // calculate majority ts
-    uint8_t majority = BQR_MACHINE_NUM / 2; // + 1 (the local replica)
-    for(int i = 0; i < BQR_MACHINE_NUM; ++i){
-        if(a_ctx->ts_array[i] >= ts){
-            majority--;
-            if(majority == 0){
-                a_ctx->majority_ts = ts;
-                if(set_read_completion){ // set read completion if flagged
-                    async_complete_reads(a_ctx, ops);
-                }
-#ifdef ENABLE_READ_BUFFER
-                complete_reads_from_read_buf(a_ctx);
-#endif
-                return;
-            }
-        }
-    }
+static inline void bqr_rb_set_last_issued_ts(bqr_ctx* b_ctx, bqr_ts_t ts){
+    b_ctx->rb.last_issued_ts = ts;
+}
+static inline void bqr_rb_set_last_completed_ts(bqr_ctx* b_ctx, bqr_ts_t ts){
+    b_ctx->rb.last_completed_ts = ts;
 }
 
 
-static inline void complete_reads_from_read_buf(async_ctx *a_ctx)
-{
-    read_buf_t *rb = &a_ctx->rb;
-    uint16_t total_completed = 0;
-    async_ts mj_ts = a_ctx->majority_ts;
-    read_buf_slot_ptr *ptrs = rb->ptrs;
+static inline void bqr_rb_pop(bqr_ctx* b_ctx){
+    bqr_assert(!bqr_r_buf_is_empty(b_ctx));
 
-    for(int i = 0; i < rb->curr_len; i++){
-        if(ptrs[i].ts <= mj_ts){
-            // account for completed req
-            total_completed += ptrs[i].cnt;
-
-            // remove from buffer
-            if(i == rb->curr_len - 1){
-                rb->curr_len--;
-                break; // break if last item
-            }
-            // remove by swapping
-            read_buf_slot_ptr last_ptr = ptrs[rb->curr_len - 1];
-            ptrs[rb->curr_len - 1].ptr = ptrs[i].ptr;
-            ptrs[i] = last_ptr;
-            rb->curr_len--;
-            i--; //recheck same idx since we swapped with last ptr
-        }
-    }
-
-//    *a_ctx->worker_completed_ops =
-//            *a_ctx->worker_completed_ops + total_completed;
+    read_buf_t* rb = b_ctx->rb;
+    rb->size--;
+    rb->head = rb->head == BQR_LAST_READ_BUFFER_SLOT
+               ? 0
+               : rb->head + 1;
 }
 
-static inline void try_add_op_to_read_buf(async_ctx *a_ctx,
-                                          bqr_op_t* src,
-                                          uint16_t src_op_idx)
-{
-    uint8_t resp = bqr_op_resp(src);
-    // return if not appropriate state(op) or if buf is full
-    if(resp != BQR_OP_COMPLETE_READ_OPCODE) return;
-    assert(src->BQR_OP_OPCODE  == BQR_OP_READ_OPCODE);
+// returns null if full
+/// WARNING assumes that the slot will be filled --> must have called last_issued_ts before!
+static inline bqr_op_t* bqr_rb_next_to_push(bqr_ctx* b_ctx){
+    if(bqr_r_buf_is_full(b_ctx)) return NULL;
 
-    uint16_t curr_len = a_ctx->rb.curr_len;
-    async_ts op_ts = a_ctx->op_async_ts[src_op_idx];
+    read_buf_t* rb = b_ctx->rb;
+    uint16_t last_idx = rb->head + rb->size % MAX_READ_BUFFER_SIZE;
+    rb->size++;
 
-#ifdef ENABLE_RD_BUF_COALESCING
-    for(int i = 0; i < curr_len; ++i){
-        if(a_ctx->rb.ptrs[i].ts == op_ts){
-            a_ctx->rb.ptrs[i].cnt++;
-            src->op_meta.state = ST_MISS; // Making it a MISS will be resetted afterwards
-            return;
-        }
+    &rb->ts[last_idx] = rb->last_issued_ts + 1;
+    return &rb->read_memory[last_idx];
+}
+
+// returns null if empty / needs higher ts
+static inline bqr_op_t* bqr_rb_peak(bqr_ctx* b_ctx){
+    if(bqr_r_buf_needs_higher_ts(b_ctx)) return NULL;
+
+    if(bqr_r_buf_is_empty(b_ctx)) return NULL;
+
+    read_buf_t* rb = b_ctx->rb;
+    if(rb->ts[rb->head] > rb->last_completed_ts){
+        rb->next_r_ts = rb->ts[rb->head];
+        return NULL;
+    }
+
+    return &rb->read_memory[rb->head];
+}
+
+// returns null if was last / needs higher ts
+static inline bqr_op_t* bqr_rb_get_next(bqr_ctx* b_ctx, bqr_op_t* next_from){
+    bqr_assert(!bqr_r_buf_is_empty(b_ctx));
+
+    read_buf_t* rb = b_ctx->rb;
+    uint16_t last_idx = rb->head + rb->size % MAX_READ_BUFFER_SIZE;
+    if(next_from == last_idx) return NULL;
+
+    uint16_t nf_idx = next_from - rb;
+#ifdef BQR_ENABLE_ASSERTS
+    if(nf_idx < rb->head){
+        assert(rb->size > MAX_READ_BUFFER_SIZE - rb->head + nf_idx);
+    }else{
+        assert(rb->size > nf_idx - rb->head);
     }
 #endif
 
-    if(curr_len == MAX_READ_BUFFER_SIZE - 1) return;
+    unint16_t next_idx = nf_idx == BQR_LAST_READ_BUFFER_SLOT
+            ? 0
+            : nf_idx + 1;
 
-    read_buf_slot_ptr *rb_slot = &a_ctx->rb.ptrs[curr_len];
-    *rb_slot->ptr = *src;
-    rb_slot->cnt = 1;
-    rb_slot->ts = op_ts;
-    a_ctx->rb.curr_len++;
+    if(rb->ts[next_idx] > rb->last_completed_ts) return NULL;
 
-    uint8_t* resp_ptr = bqr_op_resp_ptr(src);
-    *resp_ptr = BQR_OP_RESET_OPCODE; // Making it a MISS will be resetted afterwards
+    return &rb->read_memory[next_idx];
 }
+/// How to iterate and pop bqr_rb:
+// 1. bqr_rb_set_last_completed_ts(ts);
+// ...
+// bqr_op_t* op_ptr = bqr_r_buf_peak(bqr_ctx);
+//while(op_ptr != null){
+//    if completed pop!
+//      bqr_rb_pop(bqr_ctx)
+//      tmp = bqr_r_buf_peak(bqr_ctx);
+//    else
+//      tmp = bqr_r_buf_get_next(bqr_ctx, op_ptr);
+//}
+
+/// How to push: 0. make sure you will push for sure
+/// (can be easily done but bqr_rb_next_to_push is not reversable op at the moment)
+// 1. bqr_rb_set_last_issued_ts(ts);
+// ..
+// 2. bqr_op_t* op_ptr = bqr_rb_next_to_push(bqr_ctx);
+// 3. fill op_ptr;
 
 #endif //ZK_BQR_H
