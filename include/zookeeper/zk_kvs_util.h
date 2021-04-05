@@ -208,4 +208,63 @@ static inline void zk_KVS_batch_op_reads(context_t *ctx)
   }
 }
 
+
+#ifdef ZK_ENABLE_BQR
+static inline void zk_KVS_batch_bqr_reads(context_t *ctx) {
+
+    zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
+    bqr_ctx *b_ctx = &zk_ctx->b_ctx;
+
+    // peak first op from the read fifo (in order tses)
+    ctx_trace_op_t *op = bqr_rb_peak(b_ctx);
+    bool is_empty_or_needs_higher_ts = op == NULL;
+    if(is_empty_or_needs_higher_ts) return;
+
+    unsigned int         bkt[BQR_MAX_READ_BUFFER_SIZE];
+    unsigned int         tag[BQR_MAX_READ_BUFFER_SIZE];
+    mica_op_t        *kv_ptr[BQR_MAX_READ_BUFFER_SIZE];	/* Ptr to KV item in log */
+    struct mica_bkt *bkt_ptr[BQR_MAX_READ_BUFFER_SIZE];
+
+    // locate KVS buckets
+    uint16_t op_i;
+    for(op_i = 0; op != NULL; op_i++) {
+        KVS_locate_one_bucket(op_i, bkt, &op->key, bkt_ptr, tag, kv_ptr, KVS);
+        op = bqr_rb_get_next(b_ctx, op);
+    }
+
+    uint16_t op_num = op_i;
+    KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
+
+    op = bqr_rb_peak(b_ctx);
+    bqr_assert(op != NULL);
+
+    // Perform reads and pop from rb
+    for(op_i = 0; op != NULL; op_i++) {
+        /*
+        if(ENABLE_ASSERTIONS){
+            static_assert(!ENABLE_CLIENTS, "not supported atm");
+            bqr_assert(op->opcode == KVS_OP_GET);
+            assert(kv_ptr[op_i] != NULL);
+            bool key_found = memcmp(&kv_ptr[op_i]->key, &op->key, KEY_SIZE) == 0;
+            if (unlikely(!key_found)) {
+                my_printf(red, "Kvs miss %u\n", op_i);
+                cust_print_key("Op", &op->key);
+                cust_print_key("KV_ptr", &kv_ptr[op_i]->key);
+                assert(false);
+            }
+        }
+         */
+
+        KVS_local_read(kv_ptr[op_i], op->value_to_read, NULL, ctx->t_id);
+
+        // pop completed read and get next one
+        bqr_rb_pop(b_ctx);
+        op = bqr_rb_peak(b_ctx);
+    }
+
+    bqr_assert(op_num == op_i);
+    t_stats[ctx->t_id].cache_hits_per_thread += op_num;
+}
+#endif
+
 #endif //Z_KVS_UTIL_H

@@ -185,6 +185,9 @@ static inline void zk_signal_completion_and_bookkeep_for_writes(zk_ctx_t *zk_ctx
       signal_completion_to_client(w_rob->session_id,
                                   zk_ctx->index_to_req_array[sess_id], t_id);
       //if (DEBUG_WRITES)
+#ifdef ZK_ENABLE_BQR
+      bqr_rb_inc_last_completed_ts(&zk_ctx->b_ctx);
+#endif
       //  my_printf(cyan, "Found a local req freeing session %d \n", zk_ctx->session_id[w_pull_ptr]);
       zk_ctx->stalled[sess_id] = false;
       zk_ctx->all_sessions_stalled = false;

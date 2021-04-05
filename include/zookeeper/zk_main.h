@@ -12,6 +12,9 @@
 #include "zk_config.h"
 
 
+#ifdef ZK_ENABLE_BQR
+# include "zk_bqr.h"
+#endif
 
 
 #define ENABLE_CACHE_STATS 0
@@ -419,6 +422,10 @@ typedef struct zk_ctx {
 
 	uint32_t wait_for_gid_dbg_counter;
   uint32_t stalled_sessions_dbg_counter;
+
+#ifdef ZK_ENABLE_BQR
+  bqr_ctx b_ctx;
+#endif
 } zk_ctx_t;
 
 

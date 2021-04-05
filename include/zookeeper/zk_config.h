@@ -19,9 +19,11 @@
 #define COMMIT_CREDITS 400
 #define FEED_FROM_TRACE 0
 
-// TODO BQR
-//#define ZK_ENABLE_BQR // comment out to disable
-//#define MAKE_FOLLOWERS_PASSIVE 1
+// BQR Settings
+#define ZK_ENABLE_BQR           // comment out to disable
+//#define BQR_ENABLE_LOCAL_READS  // comment out for bqr reads
+#define BQR_MAX_READ_BUFFER_SIZE 64
+#define BQR_ENABLE_ASSERTS // comment out to disable
 
 #define MAKE_FOLLOWERS_PASSIVE 0
 #define ENABLE_GIDS 1 // should ldr tag writes with unique ids // this is useful for remote reads

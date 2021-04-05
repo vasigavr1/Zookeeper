@@ -32,14 +32,16 @@ static inline uint16_t zk_find_trace_ops(context_t *ctx)
   while (kvs_op_i < ZK_TRACE_BATCH && !passed_over_all_sessions) {
 
 #ifdef ZK_ENABLE_BQR
-      if(trace[zk_ctx->trace_iter].opcode == KVS_OP_GET){
-          bool is_full = false;
-          if(is_full) break;
-//        ctx_trace_op_t *op_to_fill = bqr_ptr; // TODO push them to bqr_read_buf with the proper write ts
-//        ctx_fill_trace_op(ctx, &trace[zk_ctx->trace_iter], op_to_fill, working_session);
-//        continue;
-         // TODO 2: create a specialized KVS_batch_op_for_bqr_read_buf
-      }
+    if(trace[zk_ctx->trace_iter].opcode == KVS_OP_GET){
+      ctx_trace_op_t *op_to_fill = bqr_rb_next_to_push(&zk_ctx->b_ctx);
+      bool rb_is_full = op_to_fill == NULL;
+      if(rb_is_full) break;
+      ctx_fill_trace_op(ctx, &trace[zk_ctx->trace_iter], op_to_fill, working_session);
+
+      zk_ctx->trace_iter++;
+      if (trace[zk_ctx->trace_iter].opcode == NOP) zk_ctx->trace_iter = 0;
+      continue;
+    }
 #endif
 
     ctx_fill_trace_op(ctx, &trace[zk_ctx->trace_iter], &ops[kvs_op_i], working_session);
@@ -72,6 +74,10 @@ static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
   uint16_t kvs_op_i = zk_find_trace_ops(ctx);
   if (kvs_op_i > 0 )
     zk_KVS_batch_op_trace(ctx, kvs_op_i);
+
+#ifdef ZK_ENABLE_BQR
+  zk_KVS_batch_bqr_reads(ctx);
+#endif
 }
 
 /* ---------------------------------------------------------------------------
@@ -89,6 +95,9 @@ static inline void send_writes_helper(context_t *ctx)
     checks_and_stats_when_sending_unicasts(ctx, COMMIT_W_QP_ID, coalesce_num);
   zk_checks_and_print_when_forging_unicast(ctx, COMMIT_W_QP_ID);
 
+#ifdef ZK_ENABLE_BQR
+  bqr_rb_inc_last_issued_ts(&zk_ctx->b_ctx, coalesce_num);
+#endif
 
   add_to_the_mirrored_buffer(qp_meta->mirror_remote_recv_fifo,
                              (uint8_t) coalesce_num, 1, ctx->q_info);
@@ -469,6 +478,10 @@ static inline void send_prepares_helper(context_t *ctx)
   for (uint16_t i = 0; i < coalesce_num; i++) {
     w_rob_t *w_rob = (w_rob_t *) get_fifo_slot_mod(zk_ctx->w_rob, backward_ptr + i);
     w_rob->w_state = SENT;
+
+#ifdef ZK_ENABLE_BQR
+    if(w_rob->is_local) bqr_rb_inc_last_issued_ts(&zk_ctx->b_ctx, 1);
+#endif
     if (DEBUG_PREPARES)
       printf("Prepare %d, val-len %u, total message capacity %d\n", i, prep->prepare[i].val_len,
              slot_meta->byte_size);
@@ -564,6 +577,10 @@ static inline void ldr_main_loop(context_t *ctx)
 static inline void zk_main_loop(context_t *ctx)
 {
   zk_ctx_t * zk_ctx =(zk_ctx_t *) ctx->appl_ctx;
+
+#ifdef ZK_ENABLE_BQR
+    bqr_rb_init(&zk_ctx->b_ctx.rb);
+#endif
   while (true) {
     switch (zk_ctx->protocol) {
       case FOLLOWER:
