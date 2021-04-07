@@ -2,7 +2,8 @@
 #define ZK_BQR_H
 
 #include <network_context.h>
-#include <assert.h>
+#include "zk_config.h"
+#ifdef ZK_ENABLE_BQR
 
 
 // TODO 1 optimize
@@ -10,7 +11,7 @@
 // TODO 3 may implement lazy for leader
 // TODO 4 merge with hermes (lazy) and make it generic
 
-#define BQR_LAST_READ_BUFFER_SLOT (BQR_MAX_READ_BUFFER_SIZE - 1)
+#define BQR_LAST_READ_BUFFER_SLOT (bqr_read_buffer_size - 1)
 
 #ifdef BQR_ENABLE_ASSERTS
 # define bqr_assert(expr) assert((expr))
@@ -34,26 +35,42 @@ typedef struct {
 } read_buf_t;
 
 typedef struct {
-    uint8_t is_lazy; // if not -> eager
+    bool is_lazy; // if not -> eager
+    bool is_remote;
     read_buf_t rb;
 } bqr_ctx;
 
 
 
-static inline void bqr_rb_init(read_buf_t* rb){
+static inline void bqr_ctx_init(bqr_ctx *b_ctx, uint8_t thread_id){
+    b_ctx->is_lazy = 0;
+    b_ctx->is_remote = bqr_is_remote != 0;
+    read_buf_t* rb = &b_ctx->rb;
+
+    if(bqr_read_buffer_size == 0){
+        bqr_read_buffer_size = BQR_MAX_READ_BUFFER_SIZE;
+    }
+    assert(bqr_read_buffer_size <= BQR_MAX_READ_BUFFER_SIZE);
+
     rb->size = 0;
     rb->head = 0;
     rb->next_r_ts = 0;
     rb->last_issued_ts = 0;
     rb->last_completed_ts = 0;
     for(int i = 0; i < BQR_MAX_READ_BUFFER_SIZE; i++) rb->ts[i] = 0;
+
+    if(b_ctx->is_remote && thread_id == 0) {
+        my_printf(cyan, "Bqr Remote: read_buf len %d\n", bqr_read_buffer_size);
+    }else if(thread_id == 0){
+        my_printf(cyan, "Bqr Local: read_buf len %d\n", bqr_read_buffer_size);
+    }
 }
 
 static inline bool bqr_rb_is_empty(bqr_ctx* b_ctx){
     return b_ctx->rb.size == 0;
 }
 static inline bool bqr_rb_is_full(bqr_ctx* b_ctx){
-    return b_ctx->rb.size == BQR_MAX_READ_BUFFER_SIZE;
+    return b_ctx->rb.size == bqr_read_buffer_size;
 }
 static inline bool bqr_rb_needs_higher_ts(bqr_ctx* b_ctx){
     return b_ctx->rb.next_r_ts > b_ctx->rb.last_completed_ts;
@@ -61,15 +78,13 @@ static inline bool bqr_rb_needs_higher_ts(bqr_ctx* b_ctx){
 
 static inline void bqr_rb_inc_last_completed_ts(bqr_ctx* b_ctx){
     b_ctx->rb.last_completed_ts++;
-#ifndef BQR_ENABLE_LOCAL_READS
-    bqr_assert(b_ctx->rb.last_issued_ts >= b_ctx->rb.last_completed_ts);
-#endif
+    bqr_assert(!b_ctx->is_remote || b_ctx->rb.last_issued_ts >= b_ctx->rb.last_completed_ts);
 }
 static inline void bqr_rb_inc_last_issued_ts(bqr_ctx* b_ctx, bqr_ts_t nums_to_inc){
-#ifndef BQR_ENABLE_LOCAL_READS
-    b_ctx->rb.last_issued_ts += nums_to_inc;
-    bqr_assert(b_ctx->rb.last_issued_ts > b_ctx->rb.last_completed_ts);
-#endif
+    if(b_ctx->is_remote){
+        b_ctx->rb.last_issued_ts += nums_to_inc;
+        bqr_assert(b_ctx->rb.last_issued_ts > b_ctx->rb.last_completed_ts);
+    }
 }
 
 static inline void bqr_rb_pop(bqr_ctx* b_ctx){
@@ -86,7 +101,7 @@ static inline bqr_op_t* bqr_rb_next_to_push(bqr_ctx* b_ctx){
     if(bqr_rb_is_full(b_ctx)) return NULL;
 
     read_buf_t* rb = &b_ctx->rb;
-    uint16_t last_idx = (rb->head + rb->size) % BQR_MAX_READ_BUFFER_SIZE;
+    uint16_t last_idx = (rb->head + rb->size) % bqr_read_buffer_size;
     rb->size++;
 
     rb->ts[last_idx] = rb->last_issued_ts + 1;
@@ -116,12 +131,12 @@ static inline bqr_op_t* bqr_rb_get_next(bqr_ctx* b_ctx, bqr_op_t* next_from){
     bqr_assert(next_from >= rb->read_memory);
 
     uint16_t nf_idx   = next_from - rb->read_memory;
-    uint16_t last_idx = (rb->head + (rb->size - 1)) % BQR_MAX_READ_BUFFER_SIZE;
+    uint16_t last_idx = (rb->head + (rb->size - 1)) % bqr_read_buffer_size;
     if(nf_idx == last_idx) return NULL;
 
 #ifdef BQR_ENABLE_ASSERTS
     if(nf_idx < rb->head){
-           assert(rb->size > BQR_MAX_READ_BUFFER_SIZE - rb->head + nf_idx);
+           assert(rb->size > bqr_read_buffer_size - rb->head + nf_idx);
     } else assert(rb->size > nf_idx - rb->head);
 #endif
 
@@ -135,4 +150,5 @@ static inline bqr_op_t* bqr_rb_get_next(bqr_ctx* b_ctx, bqr_op_t* next_from){
     return &rb->read_memory[next_idx];
 }
 
+#endif
 #endif //ZK_BQR_H

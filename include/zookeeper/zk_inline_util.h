@@ -579,7 +579,7 @@ static inline void zk_main_loop(context_t *ctx)
   zk_ctx_t * zk_ctx =(zk_ctx_t *) ctx->appl_ctx;
 
 #ifdef ZK_ENABLE_BQR
-    bqr_rb_init(&zk_ctx->b_ctx.rb);
+    bqr_ctx_init(&zk_ctx->b_ctx, ctx->t_id);
 #endif
   while (true) {
     switch (zk_ctx->protocol) {

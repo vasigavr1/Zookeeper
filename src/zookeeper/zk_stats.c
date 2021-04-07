@@ -5,10 +5,17 @@ static void xput_file_name(char *filename)
 {
     char* path = "../build/results/xput/per-node";
 
-    sprintf(filename, "%s/%s_xPut_m_%d_wr_%.1f_rmw_%.1f_wk_%d_b_%d_c_%d%s-%d.txt",
-            path, "ZAB",
+    uint16_t qr = 0;
+    char* conf = "";
+#ifdef ZK_ENABLE_BQR
+    qr = bqr_read_buffer_size;
+    conf = bqr_is_remote ? "RemoteBqr" : "LocalBqr";
+#endif
+
+    sprintf(filename, "%s/ZAB%s_xPut_m_%d_wr_%.1f_rmw_%.1f_wk_%d_b_%d_qr_%d%s-%d.txt",
+            path, conf,
             MACHINE_NUM, write_ratio/10.0, RMW_RATIO/10.0, WORKERS_PER_MACHINE,
-            ZK_TRACE_BATCH, 0, "_uni", machine_id);
+            ZK_TRACE_BATCH, qr, "_uni", machine_id);
 }
 
 //assuming microsecond latency

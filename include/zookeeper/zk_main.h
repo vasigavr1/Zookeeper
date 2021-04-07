@@ -9,12 +9,7 @@
 
 #include "city.h"
 #include "hrd.h"
-#include "zk_config.h"
-
-
-#ifdef ZK_ENABLE_BQR
-# include "zk_bqr.h"
-#endif
+#include "zk_bqr.h"
 
 
 #define ENABLE_CACHE_STATS 0
