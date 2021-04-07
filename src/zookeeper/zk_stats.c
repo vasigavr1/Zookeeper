@@ -1,9 +1,13 @@
 #include "zk_util.h"
 
 
-static void xput_file_name(char *filename)
+latency_counters_t lt_cnt;
+
+static void zk_file_name(char *filename, bool is_xput)
 {
-    char* path = "../build/results/xput/per-node";
+    char* path = is_xput
+            ? "../build/results/xput/per-node"
+            : "../build/results/latency";
 
     uint16_t qr = 0;
     char* conf = "";
@@ -26,8 +30,8 @@ static void dump_xput_stats(double xput_in_miops)
     assert(no_func_calls < 250);
 
     FILE *xput_stats_fd;
-    char filename[128];
-    xput_file_name(filename);
+    char filename[256];
+    zk_file_name(filename, 1);
 
     const char* open_mode = no_func_calls == 0 ? "w" : "a";
     xput_stats_fd = fopen(filename, open_mode);
@@ -123,9 +127,11 @@ void zk_stats(stats_ctx_t *ctx)
   if(DUMP_STATS_2_FILE){
       dump_xput_stats(total_throughput);
       if(EXIT_ON_PRINT && print_count == PRINT_NUM - 1){
-          char filename[128];
-          xput_file_name(filename);
+          char filename[256];
+          zk_file_name(filename, 1);
           printf("xPut stats (of this node) saved at: \n\t%s\n", filename);
+          zk_file_name(filename, 0);
+          dump_latency_stats2file(&lt_cnt, filename, "reads");
       }
   }
 }

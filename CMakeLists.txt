@@ -48,6 +48,7 @@ set(ZK_SOURCE_FILES
         src/zookeeper/zk_util.c
         include/zookeeper/zk_cache.h
         include/zookeeper/zk_inline_util.h
+        include/zookeeper/zk_latency.h
         include/zookeeper/zk_bqr.h
         include/zookeeper/zk_main.h
         include/zookeeper/zk_util.h

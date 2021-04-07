@@ -5,6 +5,9 @@
 #include "zk_config.h"
 #ifdef ZK_ENABLE_BQR
 
+#include "zk_latency.h"
+
+#define BQR_ENABLE_LATENCY 1
 
 // TODO 1 optimize
 // TODO 2 measure latency
@@ -37,6 +40,9 @@ typedef struct {
 typedef struct {
     bool is_lazy; // if not -> eager
     bool is_remote;
+    uint8_t t_id;
+    struct timespec time;
+    latency_counters_t *lt_cnt;
     read_buf_t rb;
 } bqr_ctx;
 
@@ -44,8 +50,15 @@ typedef struct {
 
 static inline void bqr_ctx_init(bqr_ctx *b_ctx, uint8_t thread_id){
     b_ctx->is_lazy = 0;
+    b_ctx->t_id = thread_id;
     b_ctx->is_remote = bqr_is_remote != 0;
     read_buf_t* rb = &b_ctx->rb;
+
+
+    if(thread_id == 0) {
+        b_ctx->lt_cnt = &lt_cnt;
+        latency_counters_init(b_ctx->lt_cnt);
+    }
 
     if(bqr_read_buffer_size == 0){
         bqr_read_buffer_size = BQR_MAX_READ_BUFFER_SIZE;
@@ -91,6 +104,10 @@ static inline void bqr_rb_pop(bqr_ctx* b_ctx){
     bqr_assert(!bqr_rb_is_empty(b_ctx));
 
     read_buf_t* rb = &b_ctx->rb;
+    if(BQR_ENABLE_LATENCY && b_ctx->t_id == 0 && rb->head == 0){
+        stop_latency_measurement(b_ctx->lt_cnt, &b_ctx->time);
+    }
+
     rb->size--;
     rb->head = rb->head == BQR_LAST_READ_BUFFER_SLOT ? 0 : rb->head + 1;
 }
@@ -103,6 +120,10 @@ static inline bqr_op_t* bqr_rb_next_to_push(bqr_ctx* b_ctx){
     read_buf_t* rb = &b_ctx->rb;
     uint16_t last_idx = (rb->head + rb->size) % bqr_read_buffer_size;
     rb->size++;
+
+    if(BQR_ENABLE_LATENCY && b_ctx->t_id == 0 && last_idx == 0){
+        start_latency_measurement(&b_ctx->time);
+    }
 
     rb->ts[last_idx] = rb->last_issued_ts + 1;
     return &rb->read_memory[last_idx];
