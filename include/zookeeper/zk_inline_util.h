@@ -9,6 +9,7 @@
 //---------------------------------------------------------------------------*/
 
 
+#define MAX_BQR_READS_FOR_SINGLE_INSERT (bqr_is_remote ? 256 : 64)
 // Both Leader and Followers use this to read the trace, propagate reqs to the cache and maintain their prepare/write fifos
 static inline uint16_t zk_find_trace_ops(context_t *ctx)
 {
@@ -28,6 +29,9 @@ static inline uint16_t zk_find_trace_ops(context_t *ctx)
 
   bool passed_over_all_sessions = false;
 
+#ifdef ZK_ENABLE_BQR
+  uint16_t bqr_inserts = 0;
+#endif
   /// main loop
   while (kvs_op_i < ZK_TRACE_BATCH && !passed_over_all_sessions) {
 
@@ -40,6 +44,8 @@ static inline uint16_t zk_find_trace_ops(context_t *ctx)
 
       zk_ctx->trace_iter++;
       if (trace[zk_ctx->trace_iter].opcode == NOP) zk_ctx->trace_iter = 0;
+
+      if(++bqr_inserts == MAX_BQR_READS_FOR_SINGLE_INSERT) break;
       continue;
     }
 #endif
@@ -76,7 +82,7 @@ static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
     zk_KVS_batch_op_trace(ctx, kvs_op_i);
 
 #ifdef ZK_ENABLE_BQR
-  zk_KVS_batch_bqr_reads(ctx);
+  zk_KVS_batch_bqr_reads(ctx, MAX_BQR_READS_FOR_SINGLE_INSERT);
 #endif
 }
 

@@ -210,7 +210,7 @@ static inline void zk_KVS_batch_op_reads(context_t *ctx)
 
 
 #ifdef ZK_ENABLE_BQR
-static inline void zk_KVS_batch_bqr_reads(context_t *ctx) {
+static inline void zk_KVS_batch_bqr_reads(context_t *ctx, uint16_t max_to_complete) {
 
     zk_ctx_t *zk_ctx = (zk_ctx_t *) ctx->appl_ctx;
     bqr_ctx *b_ctx = &zk_ctx->b_ctx;
@@ -227,7 +227,7 @@ static inline void zk_KVS_batch_bqr_reads(context_t *ctx) {
 
     // locate KVS buckets
     uint16_t op_i;
-    for(op_i = 0; op != NULL; op_i++) {
+    for(op_i = 0; op != NULL && op_i < max_to_complete; op_i++) {
         KVS_locate_one_bucket(op_i, bkt, &op->key, bkt_ptr, tag, kv_ptr, KVS);
         op = bqr_rb_get_next(b_ctx, op);
     }
@@ -239,7 +239,7 @@ static inline void zk_KVS_batch_bqr_reads(context_t *ctx) {
     bqr_assert(op != NULL);
 
     // Perform reads and pop from rb
-    for(op_i = 0; op != NULL; op_i++) {
+    for(op_i = 0; op != NULL && op_i < max_to_complete; op_i++) {
         /*
         if(ENABLE_ASSERTIONS){
             static_assert(!ENABLE_CLIENTS, "not supported atm");
