@@ -21,7 +21,7 @@
 
 // BQR Settings
 #define ZK_ENABLE_BQR           // comment out to disable
-#define BQR_MAX_READ_BUFFER_SIZE 1024
+#define BQR_MAX_READ_BUFFER_SIZE (100 * 64)
 //#define BQR_ENABLE_ASSERTS // comment out to disable
 
 #define MAKE_FOLLOWERS_PASSIVE 0
