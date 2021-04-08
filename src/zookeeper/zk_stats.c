@@ -1,6 +1,6 @@
 #include "zk_util.h"
 
-
+struct timespec lt_timer;
 latency_counters_t lt_cnt;
 
 static void zk_file_name(char *filename, bool is_xput)

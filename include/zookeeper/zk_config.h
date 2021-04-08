@@ -20,7 +20,7 @@
 #define FEED_FROM_TRACE 0
 
 // BQR Settings
-#define ZK_ENABLE_BQR           // comment out to disable
+//#define ZK_ENABLE_BQR           // comment out to disable
 #define BQR_MAX_READ_BUFFER_SIZE (100 * 64)
 //#define BQR_ENABLE_ASSERTS // comment out to disable
 
@@ -29,6 +29,7 @@
 #define ENABLE_GID_ORDERING (ENABLE_GIDS ? 1 : 0) // should global write ordering occur
 #define DISABLE_UPDATING_KVS 0
 #define USE_LIN_READS (ENABLE_GIDS ? 0 : 0)
+#define ENABLE_LIN_READ_LATENCY 0
 
 #define FOLLOWERS_PER_MACHINE (WORKERS_PER_MACHINE)
 #define LEADERS_PER_MACHINE (WORKERS_PER_MACHINE)

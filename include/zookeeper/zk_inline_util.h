@@ -54,6 +54,13 @@ static inline uint16_t zk_find_trace_ops(context_t *ctx)
     zk_ctx->stalled[working_session] =
       ops[kvs_op_i].opcode == KVS_OP_PUT || (USE_LIN_READS && zk_ctx->protocol == FOLLOWER);
 
+      if (USE_LIN_READS && ENABLE_LIN_READ_LATENCY &&
+          zk_ctx->protocol == FOLLOWER && ctx->t_id == 0 &&
+          kvs_op_i == 0 && ops[kvs_op_i].opcode == KVS_OP_GET)
+      {
+          start_latency_measurement(&lt_timer);
+      }
+
     passed_over_all_sessions =
       ctx_find_next_working_session(ctx, &working_session,
                                     zk_ctx->stalled,
@@ -313,6 +320,13 @@ static inline bool r_rep_handler(context_t *ctx)
     uint8_t *value_to_read =  r_rep->opcode == G_ID_EQUAL ? r_rob->value : r_rep->value;
     memcpy(r_rob->value_to_read, value_to_read, VALUE_SIZE);
     zk_ctx->local_r_id++;
+
+      if (USE_LIN_READS && ENABLE_LIN_READ_LATENCY &&
+          zk_ctx->protocol == FOLLOWER && ctx->t_id == 0 &&
+          zk_ctx->index_to_req_array[r_rob->sess_id] == 0)
+      {
+          stop_latency_measurement(&lt_cnt, &lt_timer);
+      }
 
     zk_ctx->stalled[r_rob->sess_id] = false;
     zk_ctx->all_sessions_stalled = false;
