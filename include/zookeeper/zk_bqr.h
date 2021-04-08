@@ -3,9 +3,9 @@
 
 #include <network_context.h>
 #include "zk_config.h"
-#ifdef ZK_ENABLE_BQR
-
 #include "zk_latency.h"
+
+#ifdef ZK_ENABLE_BQR
 
 #define BQR_ENABLE_LATENCY 1
 
@@ -41,8 +41,14 @@ typedef struct {
     bool is_lazy; // if not -> eager
     bool is_remote;
     uint8_t t_id;
+
     struct timespec time;
+    bqr_ts_t ts_for_completion; // if 0 there no pending request
     latency_counters_t *lt_cnt;
+
+    bool measure_latency_local;
+    bool measure_latency_remote;
+
     read_buf_t rb;
 } bqr_ctx;
 
@@ -54,6 +60,9 @@ static inline void bqr_ctx_init(bqr_ctx *b_ctx, uint8_t thread_id){
     b_ctx->is_remote = bqr_is_remote != 0;
     read_buf_t* rb = &b_ctx->rb;
 
+    bool measure_latency = BQR_ENABLE_LATENCY && b_ctx->t_id == 0;
+    b_ctx->measure_latency_local = measure_latency && !b_ctx->is_remote;
+    b_ctx->measure_latency_remote = measure_latency && b_ctx->is_remote;
 
     if(thread_id == 0) {
         b_ctx->lt_cnt = &lt_cnt;
@@ -91,6 +100,13 @@ static inline bool bqr_rb_needs_higher_ts(bqr_ctx* b_ctx){
 
 static inline void bqr_rb_inc_last_completed_ts(bqr_ctx* b_ctx){
     b_ctx->rb.last_completed_ts++;
+
+    if(b_ctx->measure_latency_remote && b_ctx->ts_for_completion > 0 &&
+       b_ctx->ts_for_completion < b_ctx->rb.last_completed_ts)
+    {
+        stop_latency_measurement(b_ctx->lt_cnt, &b_ctx->time);
+        b_ctx->ts_for_completion = 0;
+    }
     bqr_assert(!b_ctx->is_remote || b_ctx->rb.last_issued_ts >= b_ctx->rb.last_completed_ts);
 }
 static inline void bqr_rb_inc_last_issued_ts(bqr_ctx* b_ctx, bqr_ts_t nums_to_inc){
@@ -104,7 +120,7 @@ static inline void bqr_rb_pop(bqr_ctx* b_ctx){
     bqr_assert(!bqr_rb_is_empty(b_ctx));
 
     read_buf_t* rb = &b_ctx->rb;
-    if(BQR_ENABLE_LATENCY && b_ctx->t_id == 0 && rb->head == 0){
+    if(b_ctx->measure_latency_local && rb->head == 0){
         stop_latency_measurement(b_ctx->lt_cnt, &b_ctx->time);
     }
 
@@ -121,11 +137,11 @@ static inline bqr_op_t* bqr_rb_next_to_push(bqr_ctx* b_ctx){
     uint16_t last_idx = (rb->head + rb->size) % bqr_read_buffer_size;
     rb->size++;
 
+    rb->ts[last_idx] = rb->last_issued_ts + 1;
     if(BQR_ENABLE_LATENCY && b_ctx->t_id == 0 && last_idx == 0){
         start_latency_measurement(&b_ctx->time);
+        b_ctx->ts_for_completion = rb->ts[last_idx];
     }
-
-    rb->ts[last_idx] = rb->last_issued_ts + 1;
     return &rb->read_memory[last_idx];
 }
 

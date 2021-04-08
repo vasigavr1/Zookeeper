@@ -10,7 +10,9 @@ static void zk_file_name(char *filename, bool is_xput)
             : "../build/results/latency";
 
     uint16_t qr = 0;
-    char* conf = "";
+    char* conf = USE_LIN_READS ? "LinR" : "";
+    if(USE_LIN_READS && !ENABLE_GIDS) conf = "NoGIDLinR";
+
 #ifdef ZK_ENABLE_BQR
     qr = bqr_read_buffer_size;
     conf = bqr_is_remote ? "RemoteBqr" : "LocalBqr";

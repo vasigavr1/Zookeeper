@@ -80,10 +80,6 @@ static inline void zk_batch_from_trace_to_KVS(context_t *ctx)
   uint16_t kvs_op_i = zk_find_trace_ops(ctx);
   if (kvs_op_i > 0 )
     zk_KVS_batch_op_trace(ctx, kvs_op_i);
-
-#ifdef ZK_ENABLE_BQR
-  zk_KVS_batch_bqr_reads(ctx, MAX_BQR_READS_FOR_SINGLE_INSERT);
-#endif
 }
 
 /* ---------------------------------------------------------------------------
@@ -543,6 +539,10 @@ static inline void flr_main_loop(context_t *ctx)
 
   ctx_send_unicasts(ctx, R_QP_ID);
 
+#ifdef ZK_ENABLE_BQR
+    zk_KVS_batch_bqr_reads(ctx, MAX_BQR_READS_FOR_SINGLE_INSERT);
+#endif
+
 }
 
 
@@ -578,6 +578,10 @@ static inline void ldr_main_loop(context_t *ctx)
 
 
   ctx_send_unicasts(ctx, R_QP_ID);
+
+#ifdef ZK_ENABLE_BQR
+    zk_KVS_batch_bqr_reads(ctx, MAX_BQR_READS_FOR_SINGLE_INSERT);
+#endif
 }
 
 static inline void zk_main_loop(context_t *ctx)
@@ -587,6 +591,7 @@ static inline void zk_main_loop(context_t *ctx)
 #ifdef ZK_ENABLE_BQR
     bqr_ctx_init(&zk_ctx->b_ctx, ctx->t_id);
 #endif
+
   while (true) {
     switch (zk_ctx->protocol) {
       case FOLLOWER:
