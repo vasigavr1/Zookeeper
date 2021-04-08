@@ -69,7 +69,7 @@ static inline void bqr_ctx_init(bqr_ctx *b_ctx, uint8_t thread_id){
     rb->head = 0;
     rb->next_r_ts = 0;
     rb->last_issued_ts = 0;
-    rb->last_completed_ts = 0;
+    rb->last_completed_ts = !b_ctx->is_remote && write_ratio == 0 ? 1 : 0;
     for(int i = 0; i < BQR_MAX_READ_BUFFER_SIZE; i++) rb->ts[i] = 0;
 
     if(b_ctx->is_remote && thread_id == 0) {
