@@ -5,7 +5,7 @@
 #ifndef KITE_ZK_DEBUG_UTIL_H
 #define KITE_ZK_DEBUG_UTIL_H
 
-#include "../../../odlib/include/network_api/network_context.h"
+#include "../../../odlib/include/network_api/od_network_context.h"
 #include "zk_main.h"
 /* ---------------------------------------------------------------------------
 //------------------------------ ZOOKEEPER DEBUGGING -----------------------------

@@ -5,9 +5,9 @@
 #ifndef Z_KVS_UTIL_H
 #define Z_KVS_UTIL_H
 
-#include "kvs.h"
-#include "generic_inline_util.h"
-#include "debug_util.h"
+#include "od_kvs.h"
+#include "od_generic_inline_util.h"
+#include "od_debug_util.h"
 #include "zk_reservation_stations_util.h"
 
 

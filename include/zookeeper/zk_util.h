@@ -2,11 +2,11 @@
 #define ZK_UTILS_H
 
 //#include <init_func.h>
-#include "multicast.h"
+#include "od_multicast.h"
 #include "zk_main.h"
-#include "../../../odlib/include/network_api/network_context.h"
-#include <init_func.h>
-#include "kvs.h"
+#include "../../../odlib/include/network_api/od_network_context.h"
+#include <od_init_func.h>
+#include "od_kvs.h"
 
 
 extern uint64_t seed;

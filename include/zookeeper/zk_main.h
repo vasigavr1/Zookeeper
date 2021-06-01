@@ -1,14 +1,14 @@
 #ifndef ZOOKEEPER_MAIN_H
 #define ZOOKEEPER_MAIN_H
 
-#include <rdma_gen_util.h>
-#include "../../../odlib/include/fifo/fifo.h"
-#include <network_context.h>
-#include "top.h"
+#include <od_rdma_gen_util.h>
+#include "od_fifo.h"
+#include <od_network_context.h>
+#include "od_top.h"
 
 
-#include "city.h"
-#include "hrd.h"
+#include "od_city.h"
+#include "od_hrd.h"
 #include "zk_bqr.h"
 
 

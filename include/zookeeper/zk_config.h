@@ -5,7 +5,7 @@
 #ifndef ZOOKEEPER_CONFIG_H
 #define ZOOKEEPER_CONFIG_H
 
-#include "top.h"
+#include "od_top.h"
 #include "zk_opcodes.h"
 
 // CORE CONFIGURATION

@@ -5,9 +5,9 @@
 #ifndef KITE_ZK_RESERVATION_STATIONS_UTIL_H_H
 #define KITE_ZK_RESERVATION_STATIONS_UTIL_H_H
 
-#include <inline_util.h>
-#include "latency_util.h"
-#include "generic_inline_util.h"
+#include <od_inline_util.h>
+#include "od_latency_util.h"
+#include "od_generic_inline_util.h"
 #include "zk_debug_util.h"
 
 
