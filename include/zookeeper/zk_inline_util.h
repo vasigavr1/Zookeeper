@@ -24,8 +24,8 @@ static inline uint16_t zk_find_trace_ops(context_t *ctx)
   if (all_sessions_are_stalled(ctx, zk_ctx->all_sessions_stalled,
                                &zk_ctx->stalled_sessions_dbg_counter))
     return 0;
-  if (!find_starting_session(ctx, zk_ctx->last_session,
-                             zk_ctx->stalled, &working_session)) return 0;
+  if (!od_find_starting_session(ctx, zk_ctx->last_session,
+                                zk_ctx->stalled, &working_session)) return 0;
 
   bool passed_over_all_sessions = false;
 
