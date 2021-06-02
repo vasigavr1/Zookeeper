@@ -50,7 +50,7 @@ static inline uint16_t zk_find_trace_ops(context_t *ctx)
     }
 #endif
 
-    ctx_fill_trace_op(ctx, &trace[zk_ctx->trace_iter], &ops[kvs_op_i], working_session);
+    od_fill_trace_op(ctx, &trace[zk_ctx->trace_iter], &ops[kvs_op_i], working_session);
     zk_ctx->stalled[working_session] =
       ops[kvs_op_i].opcode == KVS_OP_PUT || (USE_LIN_READS && zk_ctx->protocol == FOLLOWER);
 
@@ -62,10 +62,10 @@ static inline uint16_t zk_find_trace_ops(context_t *ctx)
       }
 
     passed_over_all_sessions =
-      ctx_find_next_working_session(ctx, &working_session,
-                                    zk_ctx->stalled,
-                                    zk_ctx->last_session,
-                                    &zk_ctx->all_sessions_stalled);
+        od_find_next_working_session(ctx, &working_session,
+                                     zk_ctx->stalled,
+                                     zk_ctx->last_session,
+                                     &zk_ctx->all_sessions_stalled);
     resp[kvs_op_i].type = EMPTY;
     if (!ENABLE_CLIENTS) {
       zk_ctx->trace_iter++;
@@ -277,8 +277,8 @@ static inline bool write_handler(context_t *ctx)
         my_printf(red, "Opcode %u, i %u/%u \n", write->opcode, i, w_num);
     if (DEBUG_WRITES)
       printf("Poll for writes passes session id %u \n", write->sess_id);
-    ctx_insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1,
-               false, (void *) write, REMOTE_WRITE, 0);
+    od_insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1,
+                  false, (void *) write, REMOTE_WRITE, 0);
     if (ENABLE_ASSERTIONS) write->opcode = 3;
   }
   if (ENABLE_STAT_COUNTING) {
@@ -533,7 +533,7 @@ static inline void flr_main_loop(context_t *ctx)
   ctx_poll_incoming_messages(ctx, PREP_ACK_QP_ID);
 
   //send_acks_to_ldr(ctx);
-  ctx_send_acks(ctx, PREP_ACK_QP_ID);
+  od_send_acks(ctx, PREP_ACK_QP_ID);
 
 
   ctx_poll_incoming_messages(ctx, COMMIT_W_QP_ID);

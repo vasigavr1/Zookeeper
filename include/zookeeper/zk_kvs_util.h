@@ -35,7 +35,7 @@ static inline void zk_KVS_remote_read(context_t *ctx,
   r_rob->state = VALID;
   r_rob->l_id = zk_ctx->local_r_id + zk_ctx->r_rob->capacity ;
 
-  ctx_insert_mes(ctx, R_QP_ID, R_SIZE, (uint32_t) R_REP_BIG_SIZE, false, NULL, NOT_USED, 0);
+  od_insert_mes(ctx, R_QP_ID, R_SIZE, (uint32_t) R_REP_BIG_SIZE, false, NULL, NOT_USED, 0);
 }
 
 /* The leader and follower send their local requests to this, reads get served
@@ -89,9 +89,9 @@ static inline void zk_KVS_batch_op_trace(context_t *ctx, uint16_t op_num)
     }
     else if (op[op_i].opcode == KVS_OP_PUT){
       if (zk_ctx->protocol == FOLLOWER)
-        ctx_insert_mes(ctx, COMMIT_W_QP_ID, (uint32_t) W_SIZE, 1, false, &op[op_i], NOT_USED, 0);
+        od_insert_mes(ctx, COMMIT_W_QP_ID, (uint32_t) W_SIZE, 1, false, &op[op_i], NOT_USED, 0);
       else
-        ctx_insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1, false, &op[op_i], LOCAL_PREP, 0);
+        od_insert_mes(ctx, PREP_ACK_QP_ID, (uint32_t) PREP_SIZE, 1, false, &op[op_i], LOCAL_PREP, 0);
     }
     else if (ENABLE_ASSERTIONS) {
       my_printf(red, "wrong Opcode in cache: %d, req %d \n", op[op_i].opcode, op_i);
@@ -196,9 +196,9 @@ static inline void zk_KVS_batch_op_reads(context_t *ctx)
       assert(false);
     }
     if (read->opcode == KVS_OP_GET) {
-      ctx_insert_mes(ctx, R_QP_ID, R_REP_SMALL_SIZE, 0,
-                 !ptrs_to_r->coalesce_r_rep[op_i],
-                 (void *) kv_ptr[op_i], op_i, 0);
+      od_insert_mes(ctx, R_QP_ID, R_REP_SMALL_SIZE, 0,
+                    !ptrs_to_r->coalesce_r_rep[op_i],
+                    (void *) kv_ptr[op_i], op_i, 0);
     }
     else {
       my_printf(red, "wrong Opcode to a read in kvs: %d, req %d, flr_id %u,  g_id %lu , \n",
