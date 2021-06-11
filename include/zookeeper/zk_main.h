@@ -13,7 +13,7 @@
 
 
 #define ENABLE_CACHE_STATS 0
-#define DUMP_STATS_2_FILE 1
+#define DUMP_STATS_2_FILE 0
 
 
 /*-------------------------------------------------
