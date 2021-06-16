@@ -77,7 +77,7 @@ static inline uint16_t zk_find_trace_ops(context_t *ctx)
   //printf("Session %u pulled: ops %u, req_array ptr %u \n",
   //       working_session, kvs_op_i, ops[0].index_to_req_array);
   zk_ctx->last_session = (uint16_t) working_session;
-  t_stats[ctx->t_id].cache_hits_per_thread += kvs_op_i;
+  t_stats[ctx->t_id].total_reqs += kvs_op_i;
   return kvs_op_i;
 }
 
@@ -525,7 +525,7 @@ static inline void flr_main_loop(context_t *ctx)
 {
 
   if (PUT_A_MACHINE_TO_SLEEP && (machine_id == MACHINE_THAT_SLEEPS) &&
-      (t_stats[WORKERS_PER_MACHINE - 1].cache_hits_per_thread > 4 * MILLION)) {
+      (t_stats[WORKERS_PER_MACHINE - 1].total_reqs > 4 * MILLION)) {
     if (ctx->t_id == 0) my_printf(yellow, "Machine performs scheduled failure\n");
     exit(0);
   }

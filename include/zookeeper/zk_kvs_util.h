@@ -263,7 +263,7 @@ static inline void zk_KVS_batch_bqr_reads(context_t *ctx, uint16_t max_to_comple
     }
 
     bqr_assert(op_num == op_i);
-    t_stats[ctx->t_id].cache_hits_per_thread += op_num;
+    t_stats[ctx->t_id].total_reqs += op_num;
 }
 #endif
 

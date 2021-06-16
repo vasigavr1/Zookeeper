@@ -624,7 +624,7 @@ static inline void checks_when_leader_creates_write(zk_prep_mes_t *preps, uint32
     if (w_rob->w_state != INVALID)
       my_printf(red, "Leader %u w_state %d at w_ptr %u, g_id %lu, cache hits %lu, capacity %u \n",
                 t_id, w_rob->w_state, w_ptr, w_rob->g_id,
-                t_stats[t_id].cache_hits_per_thread, zk_ctx->w_rob->capacity);
+                t_stats[t_id].total_reqs, zk_ctx->w_rob->capacity);
     //printf("Sent %d, Valid %d, Ready %d \n", SENT, VALID, READY);
     assert(w_rob->w_state == INVALID);
 

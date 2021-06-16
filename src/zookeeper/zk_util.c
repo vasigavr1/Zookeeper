@@ -106,9 +106,9 @@ void dump_stats_2_file(struct stats* st){
             "preps sent, coms sent, acks sent, "
             "received preps, received coms, received acks\n");
     for(i = 0; i < WORKERS_PER_MACHINE; ++i){
-        total_MIOPS = st->cache_hits_per_thread[i];
+        total_MIOPS = st->total_reqs[i];
         fprintf(fp, "client: %d, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f\n",
-                i, total_MIOPS, st->cache_hits_per_thread[i], st->preps_sent[i],
+                i, total_MIOPS, st->total_reqs[i], st->preps_sent[i],
                 st->coms_sent[i], st->acks_sent[i],
                 st->received_preps[i],st->received_coms[i],
                 st->received_acks[i]);
