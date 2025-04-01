@@ -19,8 +19,11 @@
 #define COMMIT_CREDITS 400
 #define FEED_FROM_TRACE 0
 
-// BQR Settings
-//#define ZK_ENABLE_BQR           // comment out to disable
+// ALR Settings
+//#define ENABLE_ALRS // comment out to disable almost local reads
+#ifdef ENABLE_ALRS
+# define ZK_ENABLE_BQR 
+#endif
 #define BQR_MAX_READ_BUFFER_SIZE (100 * 64)
 //#define BQR_ENABLE_ASSERTS // comment out to disable
 
